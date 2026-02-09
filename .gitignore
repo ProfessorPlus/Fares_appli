@@ -1,57 +1,54 @@
-# Secrets et configuration sensible
+# =========================
+# 🔐 SECRETS & CONFIG
+# =========================
 secrets.yaml
 *_secrets.yaml
 *.env
+.streamlit/secrets.toml
+config/*.yaml
 
-# Données locales
+# =========================
+# 📁 DONNÉES GÉNÉRÉES
+# =========================
 data/
+Factures/
+invoice_counters/
 *.json
 !package.json
 
-# Factures générées
-Factures/
-
-# Python
+# =========================
+# 🐍 PYTHON
+# =========================
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
+*$py.class
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
 .eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
 
-# Virtual environments
-venv/
-ENV/
-env/
+# =========================
+# 🧪 ENVIRONNEMENTS
+# =========================
 .venv/
+venv/
+env/
+ENV/
 
-# IDE
+# =========================
+# 🖥️ IDE / OS
+# =========================
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Streamlit
-.streamlit/secrets.toml
-
-# Logs
+# =========================
+# 📜 LOGS
+# =========================
 *.log
