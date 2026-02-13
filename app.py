@@ -7,7 +7,7 @@ VERSION 2.0 - Restructurée
 import streamlit as st
 import os
 import json
-import yaml
+from scripts.config_loader import load_secrets
 from datetime import datetime, time, timedelta
 import calendar
 
@@ -139,19 +139,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ===========================
-# FONCTIONS UTILITAIRES
-# ===========================
-def load_secrets():
-    paths = [
-        os.path.join(CONFIG_DIR, "secrets.yaml"),
-        os.path.join(BASE_DIR, "secrets.yaml"),
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            with open(p, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
-    return None
 
 def save_secrets(secrets):
     path = os.path.join(CONFIG_DIR, "secrets.yaml")

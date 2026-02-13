@@ -1776,49 +1776,267 @@ def page_config(ctx):
                         st.button("🗑️ Supprimer", use_container_width=True, disabled=True)
     
     # ===========================
-    # TAB 2: Familles EUR
+    # TAB 2: Familles EUR (AMÉLIORÉ)
     # ===========================
     with tab2:
-        familles = ctx["load_familles_euros"]()
-        st.info(f"📋 {len(familles)} famille(s) en EUR")
+        st.markdown("### 💶 Familles facturées en EUR")
         
-        for i, fam in enumerate(familles):
-            col1, col2 = st.columns([5, 1])
-            with col1:
-                st.write(f"• {fam}")
-            with col2:
-                if st.button("🗑️", key=f"del_eur_{i}"):
-                    familles.remove(fam)
-                    ctx["save_familles_euros"](familles)
+        familles_eur = ctx["load_familles_euros"]()
+        data = ctx["load_extracted_data"]()
+        
+        # Récupérer toutes les familles depuis TutorBird
+        all_families = []
+        if data:
+            for fam_id, fam_data in data.items():
+                parent_name = fam_data.get("parent_name") or fam_data.get("family_name") or ""
+                if parent_name and parent_name not in all_families:
+                    all_families.append(parent_name)
+        all_families.sort()
+        
+        st.info(f"📋 **{len(familles_eur)}** famille(s) configurée(s) en EUR")
+        
+        # Afficher les familles existantes dans un tableau
+        if familles_eur:
+            table_data = []
+            for fam in familles_eur:
+                table_data.append({
+                    "Famille": fam,
+                    "Supprimer": False
+                })
+            
+            edited_fam_df = st.data_editor(
+                table_data,
+                column_config={
+                    "Famille": st.column_config.TextColumn(
+                        "👨‍👩‍👧 Famille",
+                        disabled=True,
+                        width="large"
+                    ),
+                    "Supprimer": st.column_config.CheckboxColumn(
+                        "🗑️",
+                        width="small",
+                        default=False
+                    )
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="familles_eur_table"
+            )
+            
+            # Bouton supprimer
+            to_delete_fam = [row["Famille"] for row in edited_fam_df if row.get("Supprimer")]
+            if to_delete_fam:
+                if st.button(f"🗑️ Supprimer {len(to_delete_fam)} famille(s)", use_container_width=True):
+                    for fam in to_delete_fam:
+                        if fam in familles_eur:
+                            familles_eur.remove(fam)
+                    ctx["save_familles_euros"](familles_eur)
+                    st.success(f"✅ {len(to_delete_fam)} famille(s) supprimée(s)")
                     st.rerun()
         
-        new_fam = st.text_input("Ajouter une famille", key="new_euro_fam")
-        if st.button("➕ Ajouter", key="add_euro"):
-            if new_fam:
-                familles.append(new_fam)
-                ctx["save_familles_euros"](familles)
-                st.rerun()
+        st.markdown("---")
+        st.markdown("#### ➕ Ajouter une famille en EUR")
+        
+        # Filtrer les familles qui ne sont pas encore en EUR
+        available_families = [f for f in all_families if f not in familles_eur]
+        
+        if available_families:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                selected_family = st.selectbox(
+                    "Sélectionner une famille",
+                    options=[""] + available_families,
+                    format_func=lambda x: "-- Choisir une famille --" if x == "" else x,
+                    key="select_famille_eur"
+                )
+            with col2:
+                st.write("")  # Spacer
+                st.write("")  # Spacer
+                add_disabled = selected_family == ""
+                if st.button("➕ Ajouter", type="primary", use_container_width=True, disabled=add_disabled, key="btn_add_fam_eur"):
+                    if selected_family:
+                        familles_eur.append(selected_family)
+                        ctx["save_familles_euros"](familles_eur)
+                        st.success(f"✅ **{selected_family}** ajoutée aux familles EUR")
+                        st.rerun()
+        else:
+            if all_families:
+                st.success("✅ Toutes les familles sont déjà configurées en EUR !")
+            else:
+                st.warning("⚠️ Aucune famille disponible. Lancez d'abord une extraction TutorBird.")
+        
+        # Option pour ajouter manuellement
+        with st.expander("📝 Ajouter manuellement (si non présent dans TutorBird)"):
+            manual_fam = st.text_input("Nom de la famille", key="manual_famille_eur")
+            if st.button("➕ Ajouter manuellement", key="btn_add_manual_eur"):
+                if manual_fam and manual_fam.strip():
+                    if manual_fam.strip() not in familles_eur:
+                        familles_eur.append(manual_fam.strip())
+                        ctx["save_familles_euros"](familles_eur)
+                        st.success(f"✅ **{manual_fam.strip()}** ajoutée")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Cette famille est déjà dans la liste")
     
     # ===========================
-    # TAB 3: Tarifs spéciaux
+    # TAB 3: Tarifs spéciaux (AMÉLIORÉ)
     # ===========================
     with tab3:
-        tarifs = ctx["load_tarifs_speciaux"]()
-        st.info(f"📋 {len(tarifs)} tarif(s) spécial(aux)")
+        st.markdown("### 🏷️ Tarifs spéciaux")
+        st.caption("Définissez des tarifs personnalisés pour certaines combinaisons professeur/famille")
         
-        for i, t in enumerate(tarifs):
-            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-            with col1:
-                st.write(f"👨‍🏫 {t.get('teacher')}")
-            with col2:
-                st.write(f"👤 {t.get('parent')}")
-            with col3:
-                st.write(f"💰 {t.get('pay_rate')}€")
-            with col4:
-                if st.button("🗑️", key=f"del_t_{i}"):
-                    tarifs.pop(i)
+        tarifs = ctx["load_tarifs_speciaux"]()
+        secrets = ctx["load_secrets"]()
+        data = ctx["load_extracted_data"]()
+        
+        # Récupérer les profs et familles
+        teacher_names = list(secrets.get("teachers", {}).keys()) if secrets else []
+        
+        all_families = []
+        if data:
+            for fam_id, fam_data in data.items():
+                parent_name = fam_data.get("parent_name") or fam_data.get("family_name") or ""
+                if parent_name and parent_name not in all_families:
+                    all_families.append(parent_name)
+        all_families.sort()
+        
+        st.info(f"📋 **{len(tarifs)}** tarif(s) spécial(aux) configuré(s)")
+        
+        # Afficher les tarifs existants dans un tableau
+        if tarifs:
+            table_data = []
+            for t in tarifs:
+                devise = t.get("currency", "EUR")
+                if devise == "EUR" or "eur" in str(t.get("pay_rate", "")).lower():
+                    devise = "EUR"
+                    montant = t.get("pay_rate", 0)
+                else:
+                    devise = "CHF"
+                    montant = t.get("pay_rate_chf", t.get("pay_rate", 0))
+                
+                table_data.append({
+                    "Professeur": t.get("teacher", ""),
+                    "Famille": t.get("parent", ""),
+                    "Tarif": f"{montant}",
+                    "Devise": devise,
+                    "Supprimer": False
+                })
+            
+            edited_tarifs_df = st.data_editor(
+                table_data,
+                column_config={
+                    "Professeur": st.column_config.TextColumn(
+                        "👨‍🏫 Professeur",
+                        disabled=True,
+                        width="medium"
+                    ),
+                    "Famille": st.column_config.TextColumn(
+                        "👨‍👩‍👧 Famille",
+                        disabled=True,
+                        width="medium"
+                    ),
+                    "Tarif": st.column_config.TextColumn(
+                        "💰 Tarif/h",
+                        disabled=True,
+                        width="small"
+                    ),
+                    "Devise": st.column_config.TextColumn(
+                        "💱 Devise",
+                        disabled=True,
+                        width="small"
+                    ),
+                    "Supprimer": st.column_config.CheckboxColumn(
+                        "🗑️",
+                        width="small",
+                        default=False
+                    )
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="tarifs_speciaux_table"
+            )
+            
+            # Bouton supprimer
+            to_delete_idx = [i for i, row in enumerate(edited_tarifs_df) if row.get("Supprimer")]
+            if to_delete_idx:
+                if st.button(f"🗑️ Supprimer {len(to_delete_idx)} tarif(s)", use_container_width=True):
+                    # Supprimer en ordre inverse pour éviter les problèmes d'index
+                    for idx in sorted(to_delete_idx, reverse=True):
+                        if idx < len(tarifs):
+                            tarifs.pop(idx)
                     ctx["save_tarifs_speciaux"](tarifs)
+                    st.success(f"✅ {len(to_delete_idx)} tarif(s) supprimé(s)")
                     st.rerun()
+        
+        st.markdown("---")
+        st.markdown("#### ➕ Ajouter un tarif spécial")
+        
+        if not teacher_names:
+            st.warning("⚠️ Aucun professeur configuré. Ajoutez d'abord des professeurs.")
+        elif not all_families:
+            st.warning("⚠️ Aucune famille disponible. Lancez d'abord une extraction TutorBird.")
+        else:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                selected_teacher = st.selectbox(
+                    "👨‍🏫 Professeur",
+                    options=[""] + teacher_names,
+                    format_func=lambda x: "-- Choisir un professeur --" if x == "" else x,
+                    key="tarif_select_teacher"
+                )
+            
+            with col2:
+                selected_parent = st.selectbox(
+                    "👨‍👩‍👧 Famille",
+                    options=[""] + all_families,
+                    format_func=lambda x: "-- Choisir une famille --" if x == "" else x,
+                    key="tarif_select_parent"
+                )
+            
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                tarif_amount = st.number_input(
+                    "💰 Tarif horaire",
+                    min_value=0.0,
+                    max_value=500.0,
+                    value=25.0,
+                    step=1.0,
+                    key="tarif_amount"
+                )
+            
+            with col4:
+                tarif_devise = st.selectbox(
+                    "💱 Devise",
+                    options=["EUR", "CHF"],
+                    key="tarif_devise"
+                )
+            
+            # Vérifier si ce tarif existe déjà
+            already_exists = False
+            if selected_teacher and selected_parent:
+                for t in tarifs:
+                    if t.get("teacher") == selected_teacher and t.get("parent") == selected_parent:
+                        already_exists = True
+                        break
+            
+            if already_exists:
+                st.warning(f"⚠️ Un tarif spécial existe déjà pour **{selected_teacher}** / **{selected_parent}**")
+            
+            add_disabled = not selected_teacher or not selected_parent or already_exists
+            
+            if st.button("➕ Ajouter le tarif spécial", type="primary", use_container_width=True, disabled=add_disabled):
+                new_tarif = {
+                    "teacher": selected_teacher,
+                    "parent": selected_parent,
+                    "pay_rate": float(tarif_amount),
+                    "currency": tarif_devise
+                }
+                tarifs.append(new_tarif)
+                ctx["save_tarifs_speciaux"](tarifs)
+                st.success(f"✅ Tarif spécial ajouté : **{selected_teacher}** / **{selected_parent}** → **{tarif_amount} {tarif_devise}/h**")
+                st.rerun()
     
     # ===========================
     # TAB 4: Email

@@ -2,6 +2,7 @@
 💳 Create Payment Links
 Génération des liens de paiement Stripe
 + Audit de complétude (familles/profs manquants)
+VERSION CLOUD - Compatible Streamlit Cloud avec Google Drive
 """
 
 import os
@@ -14,6 +15,13 @@ try:
     import stripe
 except ImportError:
     stripe = None
+
+# Import du storage manager pour compatibilité cloud
+try:
+    from scripts.storage_manager import save_json, load_json
+    STORAGE_AVAILABLE = True
+except ImportError:
+    STORAGE_AVAILABLE = False
 
 
 def normalize(s):
@@ -73,8 +81,8 @@ def run_create_payment_links(
     data_dir,
     callback=None,
     payment_method_types=None,
-    target_family_ids=None,     # NEW
-    skip_if_exists=True,        # NEW
+    target_family_ids=None,
+    skip_if_exists=True,
 ):
     """
     Génère les liens de paiement Stripe.
@@ -94,30 +102,36 @@ def run_create_payment_links(
         TEACHERS = secrets.get("teachers", {})
 
         # ---------------------------
-        # NEW: index des liens déjà créés
+        # Charger les liens existants (local ou Drive)
         # ---------------------------
         existing_index = set()
         output_path = os.path.join(data_dir, "payment_links_output.json")
-        if skip_if_exists and os.path.exists(output_path):
+        
+        # Essayer de charger depuis storage_manager (supporte Drive)
+        prev = None
+        if STORAGE_AVAILABLE and skip_if_exists:
+            prev = load_json("payment_links_output.json", "data", default=None)
+        
+        # Fallback: fichier local
+        if prev is None and skip_if_exists and os.path.exists(output_path):
             try:
                 with open(output_path, "r", encoding="utf-8") as f:
-                    prev = json.load(f) or []
-                for it in prev:
-                    # clé stable : (fam_id, teacher, currency, amount, date)
-                    existing_index.add((
-                        str(it.get("family_id", "")),
-                        normalize(it.get("teacher", "")),
-                        (it.get("currency") or "").lower(),
-                        float(it.get("amount") or 0),
-                        str(it.get("invoice_date") or ""),  # peut ne pas exister dans l'ancien format
-                    ))
+                    prev = json.load(f)
             except Exception:
-                # si fichier corrompu -> on ignore, mais on ne casse pas
-                existing_index = set()
+                prev = []
+        
+        if prev:
+            for it in prev:
+                existing_index.add((
+                    str(it.get("family_id", "")),
+                    normalize(it.get("teacher", "")),
+                    (it.get("currency") or "").lower(),
+                    float(it.get("amount") or 0),
+                    str(it.get("invoice_date") or ""),
+                ))
 
         def already_exists(fam_id, teacher_name, currency, total_amount, invoice_date):
             key = (str(fam_id), normalize(teacher_name), currency.lower(), float(total_amount), str(invoice_date))
-            # fallback si anciens items sans invoice_date : on teste aussi sans date
             key2 = (str(fam_id), normalize(teacher_name), currency.lower(), float(total_amount), "")
             return key in existing_index or key2 in existing_index
 
@@ -166,7 +180,7 @@ def run_create_payment_links(
         expected_families = {}
         created_families = set()
 
-        # NEW: filtrage fam_id
+        # Filtrage fam_id
         all_items = list(data.items())
         if target_family_ids:
             target_set = {str(x) for x in target_family_ids}
@@ -232,9 +246,9 @@ def run_create_payment_links(
                 if total_amount <= 0:
                     continue
 
-                # NEW: skip si déjà créé
+                # Skip si déjà créé
                 if skip_if_exists and already_exists(fam_id, teacher_name, currency, total_amount, today):
-                    created_families.add(fam_id)  # considéré “ok” pour complétude
+                    created_families.add(fam_id)
                     continue
 
                 students = list({L.get("student", "") for L in t_lessons if L.get("student")})
@@ -325,7 +339,7 @@ def run_create_payment_links(
                     "amount": total_amount,
                     "teacher_pay": teacher_amount,
                     "payment_link": link.url,
-                    "invoice_date": today,  # NEW: utile pour idempotence
+                    "invoice_date": today,
                 })
 
         missing_families = []
@@ -342,19 +356,23 @@ def run_create_payment_links(
 
         os.makedirs(data_dir, exist_ok=True)
 
-        # NEW: merge avec l’existant si présent
-        merged = []
-        if os.path.exists(output_path):
-            try:
-                with open(output_path, "r", encoding="utf-8") as f:
-                    merged = json.load(f) or []
-            except Exception:
-                merged = []
-
+        # Merge avec l'existant
+        merged = prev if prev else []
         merged.extend(output_links)
 
+        # Sauvegarde locale
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(merged, f, indent=2, ensure_ascii=False)
+
+        # Sauvegarde Google Drive (si disponible)
+        drive_saved = False
+        if STORAGE_AVAILABLE:
+            try:
+                result = save_json("payment_links_output.json", merged, folder="data")
+                if result.get("success") and result.get("drive_id"):
+                    drive_saved = True
+            except Exception as e:
+                print(f"⚠️ Erreur sauvegarde Drive: {e}")
 
         nb_expected = len(expected_families)
         nb_created = len(created_families)
@@ -371,9 +389,18 @@ def run_create_payment_links(
             "profs_inconnus": profs_inconnus,
             "missing_families": missing_families,
         }
+        
+        # Sauvegarde rapport local
         report_path = os.path.join(data_dir, "payment_links_report.json")
         with open(report_path, "w", encoding="utf-8") as f:
             json.dump(report, f, indent=2, ensure_ascii=False)
+
+        # Sauvegarde rapport sur Drive
+        if STORAGE_AVAILABLE:
+            try:
+                save_json("payment_links_report.json", report, folder="data")
+            except Exception:
+                pass
 
         update(100, "✅ Terminé !")
 
@@ -390,6 +417,7 @@ def run_create_payment_links(
             "output_path": output_path,
             "report_path": report_path,
             "links": merged[:10],
+            "drive_saved": drive_saved,
         }
 
     except stripe.error.AuthenticationError:

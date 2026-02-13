@@ -1,12 +1,20 @@
 """
 📥 Extract TutorBird
 Extraction des leçons depuis l'API TutorBird
+VERSION CLOUD - Compatible Streamlit Cloud avec Google Drive
 """
 
 import os
 import json
 import requests
 from datetime import datetime
+
+# Import du storage manager pour compatibilité cloud
+try:
+    from scripts.storage_manager import save_json
+    STORAGE_AVAILABLE = True
+except ImportError:
+    STORAGE_AVAILABLE = False
 
 
 def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir, callback=None):
@@ -167,13 +175,25 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
             families[fam_id]["total_courses"] += amount
         
         # ===============================
-        # SAUVEGARDE
+        # SAUVEGARDE (locale + Google Drive si cloud)
         # ===============================
         update(90, "💾 Sauvegarde...")
         
+        # Sauvegarde locale (toujours)
+        os.makedirs(data_dir, exist_ok=True)
         output_path = os.path.join(data_dir, "full_output_tb_SIMPLE.json")
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(families, f, indent=2, ensure_ascii=False)
+        
+        # Sauvegarde Google Drive (si disponible et sur le cloud)
+        drive_saved = False
+        if STORAGE_AVAILABLE:
+            try:
+                result = save_json("full_output_tb_SIMPLE.json", families, folder="data")
+                if result.get("success") and result.get("drive_id"):
+                    drive_saved = True
+            except Exception as e:
+                print(f"⚠️ Erreur sauvegarde Drive: {e}")
         
         update(100, "✅ Terminé !")
         
@@ -186,7 +206,8 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
             "families": len(families),
             "lessons": total_lessons,
             "amount": total_amount,
-            "output_path": output_path
+            "output_path": output_path,
+            "drive_saved": drive_saved
         }
         
     except requests.exceptions.Timeout:

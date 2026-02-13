@@ -1,7 +1,7 @@
 """
 📄 Generate Invoices
 Génération des factures PDF (basé sur generate_invoice_auto.py)
-VERSION MODIFIÉE - Support du paramètre target_folder_path pour régénération
+VERSION CLOUD - Compatible Streamlit Cloud avec Google Drive
 """
 
 import os
@@ -24,6 +24,13 @@ try:
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
+
+# Import du storage manager pour compatibilité cloud
+try:
+    from scripts.storage_manager import save_invoice_folder, load_json
+    STORAGE_AVAILABLE = True
+except ImportError:
+    STORAGE_AVAILABLE = False
 
 # ---------- CONSTANTES PDF ----------
 BRAND_BLUE = colors.Color(0.121, 0.227, 0.404)
@@ -183,8 +190,6 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
         logo_path: Chemin vers le logo (optionnel)
         callback: Fonction callback(progress, message)
         target_folder_path: Chemin vers le dossier cible (optionnel, pour régénération)
-                           Si spécifié, les factures seront générées dans ce dossier existant
-                           au lieu de créer un nouveau dossier avec la date du jour.
     
     Returns:
         dict: {"success": bool, "invoices": int, "links_found": int, "generated_files": list, ...}
@@ -228,12 +233,22 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
                     families_in_euros.add(fam_id)
                     break
         
-        # Charger liens Stripe
-        links_path = os.path.join(data_dir, "payment_links_output.json")
+        # Charger liens Stripe (local ou Drive)
         links_map = {}
-        if os.path.exists(links_path):
-            with open(links_path, "r", encoding="utf-8") as f:
-                links_list = json.load(f)
+        links_list = None
+        
+        # Essayer storage_manager d'abord (supporte Drive)
+        if STORAGE_AVAILABLE:
+            links_list = load_json("payment_links_output.json", "data", default=None)
+        
+        # Fallback fichier local
+        if links_list is None:
+            links_path = os.path.join(data_dir, "payment_links_output.json")
+            if os.path.exists(links_path):
+                with open(links_path, "r", encoding="utf-8") as f:
+                    links_list = json.load(f)
+        
+        if links_list:
             for e in links_list:
                 key = (e["family_id"], normalize(e["teacher"]))
                 links_map[key] = e["payment_link"]
@@ -246,13 +261,11 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
         invoice_root = os.path.join(base_dir, "Factures")
         counter_root = os.path.join(base_dir, "invoice_counters")
         
-        # ⚠️ MODIFICATION IMPORTANTE : Utiliser le dossier cible si spécifié
+        # Utiliser le dossier cible si spécifié
         if target_folder_path and os.path.exists(target_folder_path):
-            # Mode régénération : utiliser le dossier existant
             month_folder_path = target_folder_path
             update(5, f"📁 Régénération dans : {os.path.basename(target_folder_path)}")
         else:
-            # Mode normal : créer un nouveau dossier
             month_folder_name = f"{month_str} {year_str} - {today.strftime('%d-%m-%Y')}"
             month_folder_path = os.path.join(invoice_root, year_str, month_folder_name)
             os.makedirs(month_folder_path, exist_ok=True)
@@ -262,7 +275,7 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
         liens_trouves = 0
         liens_manquants = []
         cours_non_factures = 0
-        generated_files = []  # Liste des fichiers générés
+        generated_files = []
         
         total_families = len(data)
         current = 0
@@ -324,7 +337,7 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
                 
                 total_due_display = f"{total_due:.2f} {currency}"
                 
-                # Chercher lien paiement (comme l'original)
+                # Chercher lien paiement
                 pay_link_url = None
                 teacher_norm = normalize(teacher_display)
                 teacher_search = TEACHER_ALIAS.get(teacher_norm, teacher_norm)
@@ -367,7 +380,7 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
                 filename = f"Facture_{year_str}-{today.strftime('%m-%d')}_{teacher_clean}.pdf"
                 output_path = os.path.join(fam_base_dir, filename)
                 
-                # ---------- GENERATION PDF (comme l'original) ----------
+                # ---------- GENERATION PDF ----------
                 def draw_header(canvas, doc_inner):
                     w, h = A4
                     x_left = LEFT
@@ -493,7 +506,7 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
                 flow.append(tbl)
                 flow.append(Spacer(1, 18 * mm))
 
-                # TOTAL + BOUTON alignés à droite (comme l'original)
+                # TOTAL + BOUTON
                 total_para = TotalTight(f"Total dû : {total_due_display}", spacing=-1.0)
 
                 stack = Table(
@@ -517,9 +530,24 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
                 try:
                     doc.build(flow, onFirstPage=on_page, onLaterPages=on_page)
                     factures_generees += 1
-                    generated_files.append(output_path)  # Ajouter à la liste des fichiers générés
+                    generated_files.append(output_path)
                 except:
                     traceback.print_exc()
+        
+        # ===============================
+        # UPLOAD VERS GOOGLE DRIVE (si cloud)
+        # ===============================
+        drive_saved = False
+        if STORAGE_AVAILABLE and factures_generees > 0:
+            update(95, "☁️ Upload vers Google Drive...")
+            try:
+                result = save_invoice_folder(month_folder_path)
+                if result.get("success"):
+                    drive_saved = True
+                    uploaded_count = result.get("uploaded", 0)
+                    update(98, f"☁️ {uploaded_count} fichiers uploadés sur Drive")
+            except Exception as e:
+                print(f"⚠️ Erreur upload Drive: {e}")
         
         update(100, "✅ Terminé !")
         
@@ -530,7 +558,8 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
             "links_missing": liens_manquants,
             "absences": cours_non_factures,
             "folder": month_folder_path,
-            "generated_files": generated_files  # Retourner la liste des fichiers générés
+            "generated_files": generated_files,
+            "drive_saved": drive_saved
         }
         
     except Exception as e:
