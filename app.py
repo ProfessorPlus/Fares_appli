@@ -7,6 +7,7 @@ VERSION 2.0 - Restructurée
 import streamlit as st
 import os
 import json
+import yaml
 from scripts.config_loader import load_secrets
 from datetime import datetime, time, timedelta
 import calendar
@@ -256,57 +257,57 @@ with st.sidebar:
     
     st.markdown('<p class="section-label">ACTIONS</p>', unsafe_allow_html=True)
     
-    if st.button("🏠 Accueil", key="nav_accueil", use_container_width=True):
+    if st.button("🏠 Accueil", key="nav_accueil", width="stretch"):
         st.session_state.current_page = "accueil"
         st.rerun()
     
     st.markdown('<p class="section-label">📥 EXTRACTION</p>', unsafe_allow_html=True)
     
-    if st.button("🗓️ Extraire les leçons", key="nav_extract", use_container_width=True):
+    if st.button("🗓️ Extraire les leçons", key="nav_extract", width="stretch"):
         st.session_state.current_page = "extract"
         st.rerun()
     
-    if st.button("⚡ Activer Twint", key="nav_twint", use_container_width=True):
+    if st.button("⚡ Activer Twint", key="nav_twint", width="stretch"):
         st.session_state.current_page = "twint"
         st.rerun()
     
-    if st.button("🧹 Nettoyage Notion", key="nav_cleanup", use_container_width=True):
+    if st.button("🧹 Nettoyage Notion", key="nav_cleanup", width="stretch"):
         st.session_state.current_page = "cleanup"
         st.rerun()
     
     st.markdown('<p class="section-label">💳 PAIEMENTS & FACTURES</p>', unsafe_allow_html=True)
     
-    if st.button("💳 Créer liens paiement", key="nav_payment", use_container_width=True):
+    if st.button("💳 Créer liens paiement", key="nav_payment", width="stretch"):
         st.session_state.current_page = "payment"
         st.rerun()
     
-    if st.button("📄 Générer factures", key="nav_invoices", use_container_width=True):
+    if st.button("📄 Générer factures", key="nav_invoices", width="stretch"):
         st.session_state.current_page = "invoices"
         st.rerun()
     
     st.markdown('<p class="section-label">📧 COMMUNICATION</p>', unsafe_allow_html=True)
     
-    if st.button("📧 Envoyer factures", key="nav_send", use_container_width=True):
+    if st.button("📧 Envoyer factures", key="nav_send", width="stretch"):
         st.session_state.current_page = "send"
         st.rerun()
     
-    if st.button("🔔 Rappels paiement", key="nav_reminders", use_container_width=True):
+    if st.button("🔔 Rappels paiement", key="nav_reminders", width="stretch"):
         st.session_state.current_page = "reminders"
         st.rerun()
     
     st.markdown('<p class="section-label">🔄 SYNCHRONISATION</p>', unsafe_allow_html=True)
     
-    if st.button("🔄 Sync Stripe→Notion", key="nav_sync", use_container_width=True):
+    if st.button("🔄 Sync Stripe→Notion", key="nav_sync", width="stretch"):
         st.session_state.current_page = "sync"
         st.rerun()
     
-    if st.button("📤 Ajouter lignes Notion", key="nav_update", use_container_width=True):
+    if st.button("📤 Ajouter lignes Notion", key="nav_update", width="stretch"):
         st.session_state.current_page = "update"
         st.rerun()
     
     st.markdown('<p class="section-label">⚙️ CONFIGURATION</p>', unsafe_allow_html=True)
     
-    if st.button("⚙️ Paramètres", key="nav_config", use_container_width=True):
+    if st.button("⚙️ Paramètres", key="nav_config", width="stretch"):
         st.session_state.current_page = "config"
         st.rerun()
     

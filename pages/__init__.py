@@ -80,15 +80,15 @@ def page_accueil(ctx):
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("📥 Extraction TutorBird", use_container_width=True, key="home_extract"):
+        if st.button("📥 Extraction TutorBird", width="stretch", key="home_extract"):
             st.session_state.current_page = "extract"
             st.rerun()
     with col2:
-        if st.button("💳 Créer liens paiement", use_container_width=True, key="home_payment"):
+        if st.button("💳 Créer liens paiement", width="stretch", key="home_payment"):
             st.session_state.current_page = "payment"
             st.rerun()
     with col3:
-        if st.button("📄 Générer Factures", use_container_width=True, key="home_invoices"):
+        if st.button("📄 Générer Factures", width="stretch", key="home_invoices"):
             st.session_state.current_page = "invoices"
             st.rerun()
     
@@ -137,7 +137,7 @@ def page_extract(ctx):
     # Info pour modification de factures
     st.info("💡 **Besoin de modifier des factures ?** Utilisez l'onglet *« Régénérer certaines familles »* dans **Créer liens paiement**, puis *« Régénérer certaines factures »* dans **Générer factures**.")
     
-    if st.button("🚀 Lancer l'extraction", type="primary", use_container_width=True):
+    if st.button("🚀 Lancer l'extraction", type="primary", width="stretch"):
         secrets = ctx["load_secrets"]()
         
         if not secrets:
@@ -183,7 +183,7 @@ def page_twint(ctx):
         st.error("❌ Fichier secrets.yaml non trouvé !")
         return
     
-    if st.button("🔍 Vérifier le statut Twint", use_container_width=True):
+    if st.button("🔍 Vérifier le statut Twint", width="stretch"):
         progress = st.progress(0)
         status = st.empty()
         
@@ -224,7 +224,7 @@ def page_twint(ctx):
             default=[a["name"] for a in accounts_to_activate]
         )
         
-        if st.button("⚡ Activer Twint", type="primary", use_container_width=True):
+        if st.button("⚡ Activer Twint", type="primary", width="stretch"):
             ids = [a["id"] for a in accounts_to_activate if a["name"] in selected]
             
             result = activate_twint_for_accounts(secrets, ids)
@@ -263,7 +263,7 @@ def page_cleanup(ctx):
     with tab1:
         st.markdown("### 📅 Dates de factures présentes dans Notion")
         
-        if st.button("🔍 Scanner les dates", use_container_width=True, key="scan_dates"):
+        if st.button("🔍 Scanner les dates", width="stretch", key="scan_dates"):
             progress = st.progress(0)
             status = st.empty()
             
@@ -323,7 +323,7 @@ def page_cleanup(ctx):
         
         dry_run = st.checkbox("🔍 Mode aperçu (ne supprime rien)", value=True, key="delete_dry_run")
         
-        if st.button("🗑️ Lancer la suppression", type="primary", use_container_width=True, key="delete_old"):
+        if st.button("🗑️ Lancer la suppression", type="primary", width="stretch", key="delete_old"):
             progress = st.progress(0)
             status = st.empty()
             
@@ -365,7 +365,7 @@ def page_cleanup(ctx):
         
         dry_run = st.checkbox("🔍 Mode aperçu (ne supprime rien)", value=True, key="dup_dry_run")
         
-        if st.button("🧹 Lancer le nettoyage", type="primary", use_container_width=True, key="cleanup_dup"):
+        if st.button("🧹 Lancer le nettoyage", type="primary", width="stretch", key="cleanup_dup"):
             progress = st.progress(0)
             status = st.empty()
             
@@ -552,7 +552,7 @@ def page_payment(ctx):
             
             if missing_families:
                 st.markdown("---")
-                if st.button("🔁 Relancer uniquement les liens manquants", use_container_width=True, key="relaunch_missing"):
+                if st.button("🔁 Relancer uniquement les liens manquants", width="stretch", key="relaunch_missing"):
                     familles_euros = ctx["load_familles_euros"]()
                     tarifs_speciaux = ctx["load_tarifs_speciaux"]()
 
@@ -583,7 +583,7 @@ def page_payment(ctx):
                         st.error(f"❌ Erreur : {result['error']}")
 
         # Bouton principal
-        if st.button("🚀 Générer les liens", type="primary", use_container_width=True, key="gen_all_links"):
+        if st.button("🚀 Générer les liens", type="primary", width="stretch", key="gen_all_links"):
             familles_euros = ctx["load_familles_euros"]()
             tarifs_speciaux = ctx["load_tarifs_speciaux"]()
             
@@ -610,7 +610,7 @@ def page_payment(ctx):
         if st.session_state.get("show_goto_invoices"):
             st.markdown("---")
             st.success("✅ Liens régénérés ! Vous pouvez maintenant régénérer les factures correspondantes.")
-            if st.button("📄 Aller à Régénérer les factures →", type="primary", use_container_width=True, key="goto_invoices"):
+            if st.button("📄 Aller à Régénérer les factures →", type="primary", width="stretch", key="goto_invoices"):
                 st.session_state.current_page = "invoices"
                 st.session_state.invoices_tab = "regen"
                 st.session_state.show_goto_invoices = False
@@ -660,7 +660,7 @@ def page_payment(ctx):
             # Options
             use_on_behalf_t2, selected_teachers_t2, payment_method_types_t2 = _render_payment_options(ctx, secrets, "tab2")
             
-            if st.button("🔄 Régénérer les liens sélectionnés", type="primary", use_container_width=True, key="regen_selected"):
+            if st.button("🔄 Régénérer les liens sélectionnés", type="primary", width="stretch", key="regen_selected"):
                 familles_euros = ctx["load_familles_euros"]()
                 tarifs_speciaux = ctx["load_tarifs_speciaux"]()
                 
@@ -691,7 +691,7 @@ def page_payment(ctx):
             if st.session_state.get("show_goto_invoices_tab2"):
                 st.markdown("---")
                 st.warning("⚠️ **Étape suivante** : Régénérez les factures pour ces familles.")
-                if st.button("📄 Aller à Régénérer les factures →", type="primary", use_container_width=True, key="goto_invoices_t2"):
+                if st.button("📄 Aller à Régénérer les factures →", type="primary", width="stretch", key="goto_invoices_t2"):
                     st.session_state.current_page = "invoices"
                     st.session_state.invoices_tab = "regen"
                     st.session_state.show_goto_invoices_tab2 = False
@@ -804,7 +804,7 @@ def page_invoices(ctx):
         if not logo_path:
             st.warning("⚠️ Logo non trouvé")
         
-        if st.button("📄 Générer les factures", type="primary", use_container_width=True, key="gen_all_invoices"):
+        if st.button("📄 Générer les factures", type="primary", width="stretch", key="gen_all_invoices"):
             familles_euros = ctx["load_familles_euros"]()
             
             progress = st.progress(0)
@@ -874,7 +874,7 @@ def page_invoices(ctx):
         if selected_family_ids:
             st.info(f"📊 **{len(selected_family_ids)}** famille(s) sélectionnée(s)")
             
-            if st.button("🔄 Régénérer les factures sélectionnées", type="primary", use_container_width=True, key="regen_invoices"):
+            if st.button("🔄 Régénérer les factures sélectionnées", type="primary", width="stretch", key="regen_invoices"):
                 familles_euros = ctx["load_familles_euros"]()
                 
                 # Logo
@@ -935,7 +935,7 @@ def page_invoices(ctx):
                         data=zip_buffer.getvalue(),
                         file_name="factures_regenerees.zip",
                         mime="application/zip",
-                        use_container_width=True
+                        width="stretch"
                     )
                     
                     # Afficher la liste des fichiers
@@ -946,13 +946,13 @@ def page_invoices(ctx):
                 st.markdown("---")
                 st.info("💡 **Rappel** : Mettez à jour Notion uniquement si le prix ou les horaires ont changé.")
                 
-                if st.button("📤 Aller à Mettre à jour Notion →", use_container_width=True, key="goto_notion"):
+                if st.button("📤 Aller à Mettre à jour Notion →", width="stretch", key="goto_notion"):
                     st.session_state.current_page = "update"
                     st.session_state.update_tab = "selective"
                     st.session_state.show_download_invoices = False
                     st.rerun()
                 
-                if st.button("✅ Terminé (pas besoin de Notion)", use_container_width=True, key="done_no_notion"):
+                if st.button("✅ Terminé (pas besoin de Notion)", width="stretch", key="done_no_notion"):
                     st.session_state.show_download_invoices = False
                     st.session_state.regenerated_invoices_families = []
                     st.session_state.regenerated_invoices_paths = []
@@ -1021,7 +1021,7 @@ def page_send(ctx):
         selected_families = [f["family_id"] for f in families if f["parent_name"] in selected_names]
     
     if send_test:
-        if st.button("📧 Envoyer le test à moi-même", use_container_width=True):
+        if st.button("📧 Envoyer le test à moi-même", width="stretch"):
             progress = st.progress(0)
             status = st.empty()
             
@@ -1041,7 +1041,7 @@ def page_send(ctx):
             else:
                 st.error(f"❌ Erreur : {result['error']}")
     
-    if st.button("📧 Envoyer les factures aux clients", type="primary", use_container_width=True):
+    if st.button("📧 Envoyer les factures aux clients", type="primary", width="stretch"):
         progress = st.progress(0)
         status = st.empty()
         
@@ -1093,7 +1093,7 @@ def page_reminders(ctx):
         send_test = st.checkbox("📧 Envoyer d'abord à moi-même (test)", value=True, key="reminder_test")
     
     # Charger les impayés
-    if st.button("🔍 Voir les familles non payées", use_container_width=True):
+    if st.button("🔍 Voir les familles non payées", width="stretch"):
         result = get_unpaid_families_from_notion(secrets)
         if result["success"]:
             unpaid = result["unpaid"]
@@ -1109,7 +1109,7 @@ def page_reminders(ctx):
                 st.write(f"• **{f['parent_name']}** — {f['amount']:.2f} CHF")
     
     if send_test:
-        if st.button("📧 Envoyer le test à moi-même", use_container_width=True, key="send_reminder_test"):
+        if st.button("📧 Envoyer le test à moi-même", width="stretch", key="send_reminder_test"):
             if not latest:
                 st.error("❌ Aucun dossier de factures")
                 return
@@ -1132,7 +1132,7 @@ def page_reminders(ctx):
             else:
                 st.error(f"❌ Erreur : {result['error']}")
     
-    if st.button("📧 Envoyer les rappels", type="primary", use_container_width=True):
+    if st.button("📧 Envoyer les rappels", type="primary", width="stretch"):
         if not latest:
             st.error("❌ Aucun dossier de factures")
             return
@@ -1182,7 +1182,7 @@ def page_sync(ctx):
         since_date = st.date_input("📅 Depuis la date")
         since_date = datetime.combine(since_date, time(0, 0))
     
-    if st.button("🔄 Synchroniser", type="primary", use_container_width=True):
+    if st.button("🔄 Synchroniser", type="primary", width="stretch"):
         progress = st.progress(0)
         status = st.empty()
         
@@ -1284,7 +1284,7 @@ def page_update(ctx):
         ⚠️ Les lignes déjà existantes (même famille + même montant) seront ignorées.
         """)
         
-        if st.button("📤 Ajouter les lignes", type="primary", use_container_width=True, key="add_all_notion"):
+        if st.button("📤 Ajouter les lignes", type="primary", width="stretch", key="add_all_notion"):
             progress = st.progress(0)
             status = st.empty()
             
@@ -1434,7 +1434,7 @@ def page_update(ctx):
             3. Professeurs concernés : {', '.join(selected_teachers)}
             """)
             
-            if st.button("🔄 Mettre à jour les lignes sélectionnées", type="primary", use_container_width=True, key="update_selective_notion"):
+            if st.button("🔄 Mettre à jour les lignes sélectionnées", type="primary", width="stretch", key="update_selective_notion"):
                 progress = st.progress(0)
                 status = st.empty()
                 
@@ -1506,7 +1506,7 @@ def page_update(ctx):
         # ===========================
         # ÉTAPE 1: SCAN ET COMPARAISON
         # ===========================
-        if st.button("🔍 Scanner et comparer", type="primary", use_container_width=True, key="scan_compare_notion"):
+        if st.button("🔍 Scanner et comparer", type="primary", width="stretch", key="scan_compare_notion"):
             progress = st.progress(0)
             status = st.empty()
             
@@ -1545,7 +1545,7 @@ def page_update(ctx):
                             "Élèves": m.get("students_formatted", ""),
                         })
                     
-                    st.dataframe(missing_data, use_container_width=True, hide_index=True)
+                    st.dataframe(missing_data, width="stretch", hide_index=True)
                 else:
                     st.success("🎉 **Toutes les factures ont une ligne dans Notion !**")
             else:
@@ -1562,7 +1562,7 @@ def page_update(ctx):
                 st.markdown("---")
                 st.markdown("### ➕ Ajouter les lignes manquantes")
                 
-                if st.button(f"➕ Ajouter les {len(missing)} ligne(s) manquante(s)", type="primary", use_container_width=True, key="add_missing_notion"):
+                if st.button(f"➕ Ajouter les {len(missing)} ligne(s) manquante(s)", type="primary", width="stretch", key="add_missing_notion"):
                     progress = st.progress(0)
                     status = st.empty()
                     
@@ -1593,7 +1593,7 @@ def page_update(ctx):
                             st.markdown("---")
                             st.info("💡 **Prochaine étape :** Allez sur **Sync Stripe → Notion** pour synchroniser les paiements et mettre à jour les pages des professeurs.")
                             
-                            if st.button("🔄 Aller vers Sync Stripe → Notion", use_container_width=True, key="go_to_sync"):
+                            if st.button("🔄 Aller vers Sync Stripe → Notion", width="stretch", key="go_to_sync"):
                                 st.session_state.current_page = "sync"
                                 st.rerun()
                     else:
@@ -1623,7 +1623,7 @@ def page_config(ctx):
             st.markdown("### 👨‍🏫 Gestion des professeurs")
         with cols[1]:
             if st.session_state.get("return_to_page"):
-                if st.button("↩ Retour", use_container_width=True):
+                if st.button("↩ Retour", width="stretch"):
                     st.session_state.current_page = st.session_state.return_to_page
                     st.session_state.return_to_page = ""
                     st.rerun()
@@ -1653,7 +1653,7 @@ def page_config(ctx):
 
             new_connect = st.text_input("🔗 Stripe Connect ID (optionnel)", value="", key="ui_new_teacher_connect")
 
-            if st.button("✅ Créer le professeur", type="primary", use_container_width=True):
+            if st.button("✅ Créer le professeur", type="primary", width="stretch"):
                 name = (new_name or "").strip()
                 if not name:
                     st.error("❌ Nom vide")
@@ -1739,14 +1739,14 @@ def page_config(ctx):
                         )
                     },
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                     key="teachers_table"
                 )
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
-                    if st.button("💾 Sauvegarder les modifications", type="primary", use_container_width=True):
+                    if st.button("💾 Sauvegarder les modifications", type="primary", width="stretch"):
                         # Mettre à jour les données
                         for row in edited_df:
                             name = row["Professeur"]
@@ -1764,7 +1764,7 @@ def page_config(ctx):
                     to_delete = [row["Professeur"] for row in edited_df if row.get("Supprimer")]
                     
                     if to_delete:
-                        if st.button(f"🗑️ Supprimer ({len(to_delete)})", use_container_width=True):
+                        if st.button(f"🗑️ Supprimer ({len(to_delete)})", width="stretch"):
                             for name in to_delete:
                                 if name in teachers:
                                     del teachers[name]
@@ -1773,7 +1773,7 @@ def page_config(ctx):
                             st.success(f"✅ {len(to_delete)} professeur(s) supprimé(s)")
                             st.rerun()
                     else:
-                        st.button("🗑️ Supprimer", use_container_width=True, disabled=True)
+                        st.button("🗑️ Supprimer", width="stretch", disabled=True)
     
     # ===========================
     # TAB 2: Familles EUR (AMÉLIORÉ)
@@ -1819,14 +1819,14 @@ def page_config(ctx):
                     )
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 key="familles_eur_table"
             )
             
             # Bouton supprimer
             to_delete_fam = [row["Famille"] for row in edited_fam_df if row.get("Supprimer")]
             if to_delete_fam:
-                if st.button(f"🗑️ Supprimer {len(to_delete_fam)} famille(s)", use_container_width=True):
+                if st.button(f"🗑️ Supprimer {len(to_delete_fam)} famille(s)", width="stretch"):
                     for fam in to_delete_fam:
                         if fam in familles_eur:
                             familles_eur.remove(fam)
@@ -1853,7 +1853,7 @@ def page_config(ctx):
                 st.write("")  # Spacer
                 st.write("")  # Spacer
                 add_disabled = selected_family == ""
-                if st.button("➕ Ajouter", type="primary", use_container_width=True, disabled=add_disabled, key="btn_add_fam_eur"):
+                if st.button("➕ Ajouter", type="primary", width="stretch", disabled=add_disabled, key="btn_add_fam_eur"):
                     if selected_family:
                         familles_eur.append(selected_family)
                         ctx["save_familles_euros"](familles_eur)
@@ -1952,14 +1952,14 @@ def page_config(ctx):
                     )
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 key="tarifs_speciaux_table"
             )
             
             # Bouton supprimer
             to_delete_idx = [i for i, row in enumerate(edited_tarifs_df) if row.get("Supprimer")]
             if to_delete_idx:
-                if st.button(f"🗑️ Supprimer {len(to_delete_idx)} tarif(s)", use_container_width=True):
+                if st.button(f"🗑️ Supprimer {len(to_delete_idx)} tarif(s)", width="stretch"):
                     # Supprimer en ordre inverse pour éviter les problèmes d'index
                     for idx in sorted(to_delete_idx, reverse=True):
                         if idx < len(tarifs):
@@ -2026,7 +2026,7 @@ def page_config(ctx):
             
             add_disabled = not selected_teacher or not selected_parent or already_exists
             
-            if st.button("➕ Ajouter le tarif spécial", type="primary", use_container_width=True, disabled=add_disabled):
+            if st.button("➕ Ajouter le tarif spécial", type="primary", width="stretch", disabled=add_disabled):
                 new_tarif = {
                     "teacher": selected_teacher,
                     "parent": selected_parent,
@@ -2061,7 +2061,7 @@ def page_config(ctx):
         3. Mots de passe des applications → Générer
         """)
         
-        if st.button("💾 Sauvegarder la configuration email", type="primary", use_container_width=True):
+        if st.button("💾 Sauvegarder la configuration email", type="primary", width="stretch"):
             if "gmail" not in secrets:
                 secrets["gmail"] = {}
             secrets["gmail"]["email"] = email
