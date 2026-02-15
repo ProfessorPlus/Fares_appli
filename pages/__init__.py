@@ -1486,6 +1486,10 @@ def page_update(ctx):
     # ===========================
     with tab3:
         st.markdown("### 🔍 Ajouter ligne(s) manquante(s)")
+
+        if not latest:
+            st.error("❌ Aucun dossier de factures trouvé.")
+            return
         
         st.info("""
         **Cette option permet de :**
@@ -1496,10 +1500,6 @@ def page_update(ctx):
         
         💡 Utile pour s'assurer que toutes les factures ont bien une ligne dans Notion.
         """)
-        
-        if not latest:
-            st.error("❌ Aucun dossier de factures trouvé.")
-            return
         
         st.warning(f"📁 Dossier analysé : **{latest['name']}**")
         
