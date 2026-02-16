@@ -1,6 +1,6 @@
 """
-📥 Extract TutorBird
-Extraction des leçons depuis l'API TutorBird
+📥 Extract TutorBird - VERSION FARES
+Extraction des leçons + transactions + calcul des soldes
 VERSION CLOUD - Compatible Streamlit Cloud avec Google Drive
 """
 
@@ -19,7 +19,8 @@ except ImportError:
 
 def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir, callback=None):
     """
-    Extrait les leçons de TutorBird pour une période donnée.
+    Extrait les leçons ET transactions de TutorBird pour une période donnée.
+    Calcule les soldes (solde_initial, solde_final_reel, total_payments).
     
     Args:
         secrets: Configuration YAML chargée
@@ -50,7 +51,7 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
         # ===============================
         # EXTRACTION DES ÉTUDIANTS
         # ===============================
-        update(10, "📚 Récupération des étudiants...")
+        update(5, "📚 Récupération des étudiants...")
         
         r = requests.get(f"{TB_BASE}/students", headers=HEADERS, timeout=30)
         if not r.ok:
@@ -68,7 +69,7 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
         # ===============================
         # EXTRACTION DES PARENTS
         # ===============================
-        update(30, "👨‍👩‍👧 Récupération des parents...")
+        update(15, "👨‍👩‍👧 Récupération des parents...")
         
         r = requests.get(f"{TB_BASE}/parents", headers=HEADERS, timeout=30)
         if not r.ok:
@@ -106,7 +107,7 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
         # ===============================
         # EXTRACTION DES LEÇONS
         # ===============================
-        update(50, "📖 Récupération des leçons...")
+        update(30, "📖 Récupération des leçons...")
         
         r = requests.get(
             f"{TB_BASE}/attendance",
@@ -123,12 +124,35 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
         lessons_raw = r.json().get("ItemSubset") or r.json().get("Items") or r.json()
         
         # ===============================
+        # EXTRACTION DES TRANSACTIONS
+        # ===============================
+        update(45, "💰 Récupération des transactions...")
+        
+        r = requests.get(
+            f"{TB_BASE}/transactions",
+            headers=HEADERS,
+            params={
+                "offset": 0,
+                "limit": 2000,
+                "orderby": "Date",
+                "fields": "Date,FamilyID,Payment,Charge,AccountBalance,DisplayDescription,Method"
+            },
+            timeout=30
+        )
+        if not r.ok:
+            return {"success": False, "error": f"Erreur API transactions: {r.status_code}"}
+        
+        all_transactions = r.json().get("ItemSubset") or r.json().get("Items") or r.json()
+        
+        # ===============================
         # TRAITEMENT DES DONNÉES
         # ===============================
-        update(70, "🔄 Traitement des données...")
+        update(60, "🔄 Traitement des leçons...")
         
         families = {}
+        families_with_lessons = set()
         
+        # ---- PART 1 : Leçons ----
         for L in lessons_raw:
             dt_str = L.get("EventStartDate")
             if not dt_str:
@@ -147,6 +171,8 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
             if not fam_id:
                 continue
             
+            families_with_lessons.add(fam_id)
+            
             # Créer la famille si elle n'existe pas
             if fam_id not in families:
                 pname, pemail = choose_parent(fam_id)
@@ -156,7 +182,12 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
                     "parent_name": pname,
                     "parent_email": pemail,
                     "lessons": [],
+                    "transactions_before": [],
+                    "transactions_period": [],
                     "total_courses": 0.0,
+                    "total_payments": 0.0,
+                    "solde_initial": 0.0,
+                    "solde_final_reel": 0.0,
                 }
             
             amount = float(L.get("OriginalChargeAmount") or 0)
@@ -174,10 +205,56 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
             
             families[fam_id]["total_courses"] += amount
         
+        # ---- PART 2 : Transactions ----
+        update(75, "💳 Traitement des transactions...")
+        
+        for T in all_transactions:
+            fam_id = T.get("FamilyID")
+            if fam_id not in families_with_lessons:
+                continue
+            
+            # S'assurer que la famille existe
+            if fam_id not in families:
+                continue
+            
+            dt = datetime.fromisoformat(T["Date"])
+            pay = float(T.get("Payment") or 0)
+            bal = float(T.get("AccountBalance") or 0)
+            
+            if dt < start_dt:
+                families[fam_id]["transactions_before"].append(bal)
+            
+            elif start_dt <= dt <= end_dt:
+                families[fam_id]["transactions_period"].append({
+                    "date": T["Date"],
+                    "payment": pay,
+                    "charge": float(T.get("Charge") or 0),
+                    "balance": bal,
+                    "description": T.get("DisplayDescription"),
+                    "method": T.get("Method"),
+                })
+                
+                families[fam_id]["total_payments"] += pay
+        
+        # ---- PART 3 : Calcul final réel ----
+        update(85, "🧮 Calcul des soldes...")
+        
+        for fam_id, fam in families.items():
+            # solde_initial = dernier AccountBalance avant période
+            if fam["transactions_before"]:
+                fam["solde_initial"] = fam["transactions_before"][-1]
+            else:
+                fam["solde_initial"] = 0.0
+            
+            # solde_final_reel = solde_initial + cours - paiements
+            fam["solde_final_reel"] = (
+                fam["total_courses"] - fam["total_payments"] - fam["solde_initial"]
+            )
+        
         # ===============================
         # SAUVEGARDE (locale + Google Drive si cloud)
         # ===============================
-        update(90, "💾 Sauvegarde...")
+        update(92, "💾 Sauvegarde...")
         
         # Sauvegarde locale (toujours)
         os.makedirs(data_dir, exist_ok=True)
@@ -200,12 +277,14 @@ def run_extraction(secrets, start_date, end_date, start_time, end_time, data_dir
         # Stats
         total_lessons = sum(len(f["lessons"]) for f in families.values())
         total_amount = sum(f["total_courses"] for f in families.values())
+        total_solde = sum(f["solde_final_reel"] for f in families.values() if f["solde_final_reel"] > 0)
         
         return {
             "success": True,
             "families": len(families),
             "lessons": total_lessons,
             "amount": total_amount,
+            "solde_total": total_solde,
             "output_path": output_path,
             "drive_saved": drive_saved
         }
