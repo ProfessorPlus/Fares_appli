@@ -507,10 +507,26 @@ def page_payment(ctx):
             
             all_ok = (len(missing_families) == 0 and len(profs_inconnus) == 0)
             
+            # Récupérer les stats d'absences
+            absences_ignorees = report.get("absences_ignorees", 0)
+            absences_facturees = report.get("absences_facturees", 0)
+            
             if all_ok:
-                st.success(f"✅ **{nb_created}/{nb_expected} familles** — {nb_links} liens créés")
+                st.success(f"""
+                ✅ **Tous les liens de paiement ont été générés avec succès !**
+                - 🔗 **{nb_links}** liens créés
+                - 👨‍👩‍👧 **{nb_created}/{nb_expected}** familles traitées
+                - ❌ **{absences_ignorees}** absence(s) signalée(s) (non facturées)
+                - ⚠️ **{absences_facturees}** absence(s) sans rattrapage (facturées)
+                """)
             else:
-                st.warning(f"⚠️ **{nb_created}/{nb_expected} familles** — {nb_links} liens créés")
+                st.warning(f"""
+                ⚠️ **Liens générés avec des avertissements**
+                - 🔗 **{nb_links}** liens créés
+                - 👨‍👩‍👧 **{nb_created}/{nb_expected}** familles traitées
+                - ❌ **{absences_ignorees}** absence(s) signalée(s) (non facturées)
+                - ⚠️ **{absences_facturees}** absence(s) sans rattrapage (facturées)
+                """)
             
             if profs_inconnus:
                 st.error("❌ **Profs inconnus détectés**")
@@ -782,7 +798,7 @@ def page_invoices(ctx):
     
     # Onglets
     default_tab = 1 if st.session_state.get("invoices_tab") == "regen" else 0
-    tab1, tab2 = st.tabs(["📄 Générer toutes les factures", "🔄 Régénérer certaines factures"])
+    tab1, tab2 = st.tabs(["📄 Générer toutes les factures", "🔄 Régénérer et remplacer certaines factures"])
     
     # ===========================
     # TAB 1: Générer toutes les factures
@@ -827,16 +843,28 @@ def page_invoices(ctx):
     # TAB 2: Régénérer certaines factures
     # ===========================
     with tab2:
-        st.markdown("### 🔄 Régénérer factures pour certaines familles")
+        st.markdown("### 🔄 Remplacer factures pour certaines familles")
         
-        if latest:
-            st.warning(f"""
-            ⚠️ **Attention** : Les nouvelles factures remplaceront celles existantes dans le dossier :
-            **{latest['name']}**
-            """)
-        else:
+        if not latest:
             st.error("❌ Aucun dossier de factures existant. Générez d'abord toutes les factures.")
             return
+        
+        st.info("""
+        💡 **Pour générer une ou plusieurs factures**, rendez-vous d'abord dans l'onglet 
+        **Créer liens paiement** → **Régénérer pour certaines familles**.
+        """)
+        
+        # Bouton pour aller vers l'onglet concerné
+        if st.button("💳 Aller à « Régénérer liens pour certaines familles »", key="goto_payment_regen"):
+            st.session_state.current_page = "payment"
+            st.rerun()
+        
+        st.markdown("---")
+        
+        st.warning(f"""
+        ⚠️ **Attention** : Les nouvelles factures remplaceront celles existantes dans le dossier :
+        **{latest['name']}**
+        """)
         
         st.info("""
         💡 **Note** : La mise à jour Notion n'est nécessaire que si le **prix** ou les **horaires** ont changé.
@@ -1489,115 +1517,115 @@ def page_update(ctx):
 
         if not latest:
             st.error("❌ Aucun dossier de factures trouvé.")
-            return
         
-        st.info("""
-        **Cette option permet de :**
-        1. Scanner toutes les factures du dossier actuel
-        2. Comparer avec les lignes Notion existantes
-        3. Identifier les lignes manquantes
-        4. Ajouter automatiquement les lignes manquantes
-        
-        💡 Utile pour s'assurer que toutes les factures ont bien une ligne dans Notion.
-        """)
-        
-        st.warning(f"📁 Dossier analysé : **{latest['name']}**")
-        
-        # ===========================
-        # ÉTAPE 1: SCAN ET COMPARAISON
-        # ===========================
-        if st.button("🔍 Scanner et comparer", type="primary", width="stretch", key="scan_compare_notion"):
-            progress = st.progress(0)
-            status = st.empty()
+        else:
+            st.info("""
+            **Cette option permet de :**
+            1. Scanner toutes les factures du dossier actuel
+            2. Comparer avec les lignes Notion existantes
+            3. Identifier les lignes manquantes
+            4. Ajouter automatiquement les lignes manquantes
             
-            def callback(p, m):
-                progress.progress(p)
-                status.info(m)
+            💡 Utile pour s'assurer que toutes les factures ont bien une ligne dans Notion.
+            """)
             
-            from scripts.update_notion import run_scan_and_compare
-            result = run_scan_and_compare(secrets, data, latest["path"], callback)
+            st.warning(f"📁 Dossier analysé : **{latest['name']}**")
             
-            if result["success"]:
-                # Stocker le résultat dans session_state pour l'utiliser après
-                st.session_state.scan_compare_result = result
+            # ===========================
+            # ÉTAPE 1: SCAN ET COMPARAISON
+            # ===========================
+            if st.button("🔍 Scanner et comparer", type="primary", width="stretch", key="scan_compare_notion"):
+                progress = st.progress(0)
+                status = st.empty()
                 
+                def callback(p, m):
+                    progress.progress(p)
+                    status.info(m)
+                
+                from scripts.update_notion import run_scan_and_compare
+                result = run_scan_and_compare(secrets, data, latest["path"], callback)
+                
+                if result["success"]:
+                    # Stocker le résultat dans session_state pour l'utiliser après
+                    st.session_state.scan_compare_result = result
+                    
+                    missing = result.get("missing", [])
+                    already_exists = result.get("already_exists", [])
+                    
+                    st.success(f"""
+                    ✅ **Scan terminé !**
+                    - 📄 **{result['invoices_scanned']}** facture(s) scannée(s)
+                    - 📋 **{result['notion_rows']}** lignes Notion existantes
+                    - ✅ **{len(already_exists)}** déjà dans Notion
+                    - ⚠️ **{len(missing)}** manquante(s)
+                    """)
+                    
+                    if missing:
+                        st.warning(f"⚠️ **{len(missing)} ligne(s) manquante(s) dans Notion :**")
+                        
+                        # Afficher les détails dans un tableau
+                        missing_data = []
+                        for m in missing:
+                            missing_data.append({
+                                "Famille": m["family_name"],
+                                "Professeur": m["teacher"],
+                                "Montant": f"{m['amount']:.2f} {m.get('currency', 'CHF')}",
+                                "Élèves": m.get("students_formatted", ""),
+                            })
+                        
+                        st.dataframe(missing_data, width="stretch", hide_index=True)
+                    else:
+                        st.success("🎉 **Toutes les factures ont une ligne dans Notion !**")
+                else:
+                    st.error(f"❌ Erreur : {result['error']}")
+            
+            # ===========================
+            # ÉTAPE 2: AJOUTER LES MANQUANTES
+            # ===========================
+            if "scan_compare_result" in st.session_state:
+                result = st.session_state.scan_compare_result
                 missing = result.get("missing", [])
-                already_exists = result.get("already_exists", [])
-                
-                st.success(f"""
-                ✅ **Scan terminé !**
-                - 📄 **{result['invoices_scanned']}** facture(s) scannée(s)
-                - 📋 **{result['notion_rows']}** lignes Notion existantes
-                - ✅ **{len(already_exists)}** déjà dans Notion
-                - ⚠️ **{len(missing)}** manquante(s)
-                """)
                 
                 if missing:
-                    st.warning(f"⚠️ **{len(missing)} ligne(s) manquante(s) dans Notion :**")
+                    st.markdown("---")
+                    st.markdown("### ➕ Ajouter les lignes manquantes")
                     
-                    # Afficher les détails dans un tableau
-                    missing_data = []
-                    for m in missing:
-                        missing_data.append({
-                            "Famille": m["family_name"],
-                            "Professeur": m["teacher"],
-                            "Montant": f"{m['amount']:.2f} {m.get('currency', 'CHF')}",
-                            "Élèves": m.get("students_formatted", ""),
-                        })
-                    
-                    st.dataframe(missing_data, width="stretch", hide_index=True)
-                else:
-                    st.success("🎉 **Toutes les factures ont une ligne dans Notion !**")
-            else:
-                st.error(f"❌ Erreur : {result['error']}")
-        
-        # ===========================
-        # ÉTAPE 2: AJOUTER LES MANQUANTES
-        # ===========================
-        if "scan_compare_result" in st.session_state:
-            result = st.session_state.scan_compare_result
-            missing = result.get("missing", [])
-            
-            if missing:
-                st.markdown("---")
-                st.markdown("### ➕ Ajouter les lignes manquantes")
-                
-                if st.button(f"➕ Ajouter les {len(missing)} ligne(s) manquante(s)", type="primary", width="stretch", key="add_missing_notion"):
-                    progress = st.progress(0)
-                    status = st.empty()
-                    
-                    def callback(p, m):
-                        progress.progress(p)
-                        status.info(m)
-                    
-                    from scripts.update_notion import run_add_missing_rows
-                    add_result = run_add_missing_rows(secrets, data, missing, callback)
-                    
-                    if add_result["success"]:
-                        st.success(f"""
-                        ✅ **Ligne(s) ajoutée(s) !**
-                        - ➕ **{add_result['added']}** ligne(s) ajoutée(s) dans Notion
-                        """)
+                    if st.button(f"➕ Ajouter les {len(missing)} ligne(s) manquante(s)", type="primary", width="stretch", key="add_missing_notion"):
+                        progress = st.progress(0)
+                        status = st.empty()
                         
-                        # Afficher les erreurs s'il y en a
-                        if add_result.get("errors"):
-                            with st.expander("⚠️ Erreurs rencontrées"):
-                                for err in add_result["errors"]:
-                                    st.error(err)
+                        def callback(p, m):
+                            progress.progress(p)
+                            status.info(m)
                         
-                        # Clear le résultat
-                        del st.session_state.scan_compare_result
+                        from scripts.update_notion import run_add_missing_rows
+                        add_result = run_add_missing_rows(secrets, data, missing, callback)
                         
-                        # Proposer d'aller vers Sync Stripe
-                        if add_result['added'] > 0:
-                            st.markdown("---")
-                            st.info("💡 **Prochaine étape :** Allez sur **Sync Stripe → Notion** pour synchroniser les paiements et mettre à jour les pages des professeurs.")
+                        if add_result["success"]:
+                            st.success(f"""
+                            ✅ **Ligne(s) ajoutée(s) !**
+                            - ➕ **{add_result['added']}** ligne(s) ajoutée(s) dans Notion
+                            """)
                             
-                            if st.button("🔄 Aller vers Sync Stripe → Notion", width="stretch", key="go_to_sync"):
-                                st.session_state.current_page = "sync"
-                                st.rerun()
-                    else:
-                        st.error(f"❌ Erreur : {add_result['error']}")
+                            # Afficher les erreurs s'il y en a
+                            if add_result.get("errors"):
+                                with st.expander("⚠️ Erreurs rencontrées"):
+                                    for err in add_result["errors"]:
+                                        st.error(err)
+                            
+                            # Clear le résultat
+                            del st.session_state.scan_compare_result
+                            
+                            # Proposer d'aller vers Sync Stripe
+                            if add_result['added'] > 0:
+                                st.markdown("---")
+                                st.info("💡 **Prochaine étape :** Allez sur **Sync Stripe → Notion** pour synchroniser les paiements et mettre à jour les pages des professeurs.")
+                                
+                                if st.button("🔄 Aller vers Sync Stripe → Notion", width="stretch", key="go_to_sync"):
+                                    st.session_state.current_page = "sync"
+                                    st.rerun()
+                        else:
+                            st.error(f"❌ Erreur : {add_result['error']}")
 
 def page_config(ctx):
     st.markdown('<div class="section-title">⚙️ Configuration</div>', unsafe_allow_html=True)
@@ -1647,9 +1675,9 @@ def page_config(ctx):
 
             col1, col2 = st.columns(2)
             with col1:
-                new_chf = st.number_input("💰 Tarif CHF/h", value=0.0, step=1.0, key="ui_new_teacher_chf")
+                new_chf = st.number_input("💰 Tarif CHF/h", value=0.0, step=0.1, key="ui_new_teacher_chf")
             with col2:
-                new_eur = st.number_input("💶 Tarif EUR/h", value=0.0, step=1.0, key="ui_new_teacher_eur")
+                new_eur = st.number_input("💶 Tarif EUR/h", value=0.0, step=0.1, key="ui_new_teacher_eur")
 
             new_connect = st.text_input("🔗 Stripe Connect ID (optionnel)", value="", key="ui_new_teacher_connect")
 
@@ -1716,7 +1744,7 @@ def page_config(ctx):
                             "💰 CHF/h",
                             min_value=0,
                             max_value=500,
-                            step=1,
+                            step=0.1,
                             format="%.2f",
                             width="small"
                         ),
@@ -1724,7 +1752,7 @@ def page_config(ctx):
                             "💶 EUR/h",
                             min_value=0,
                             max_value=500,
-                            step=1,
+                            step=0.1,
                             format="%.2f",
                             width="small"
                         ),
@@ -2002,7 +2030,7 @@ def page_config(ctx):
                     min_value=0.0,
                     max_value=500.0,
                     value=25.0,
-                    step=1.0,
+                    step=0.1,
                     key="tarif_amount"
                 )
             
