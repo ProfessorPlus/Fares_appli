@@ -248,3 +248,117 @@ def get_secret(key_path, default=None):
             return default
     
     return value
+
+
+# ===========================
+# LOAD SECRETS NO PROF (NO-SPLIT MODE)
+# ===========================
+
+def _download_yaml_from_drive(drive_service, folder_id, filename):
+    """Télécharge un fichier YAML depuis Google Drive."""
+    try:
+        from googleapiclient.http import MediaIoBaseDownload
+        
+        # D'abord chercher dans le dossier config
+        query = f"name='config' and mimeType='application/vnd.google-apps.folder' and '{folder_id}' in parents and trashed=false"
+        results = drive_service.files().list(q=query, fields="files(id)").execute()
+        config_files = results.get('files', [])
+        
+        config_folder_id = config_files[0]['id'] if config_files else folder_id
+        
+        # Chercher le fichier
+        query = f"name='{filename}' and '{config_folder_id}' in parents and trashed=false"
+        results = drive_service.files().list(q=query, fields="files(id)").execute()
+        files = results.get('files', [])
+        
+        if not files:
+            # Essayer à la racine
+            query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+            results = drive_service.files().list(q=query, fields="files(id)").execute()
+            files = results.get('files', [])
+        
+        if not files:
+            print(f"⚠️ {filename} non trouvé sur Google Drive")
+            return None
+        
+        file_id = files[0]['id']
+        request = drive_service.files().get_media(fileId=file_id)
+        
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        
+        buffer.seek(0)
+        return buffer.read().decode('utf-8')
+        
+    except Exception as e:
+        print(f"⚠️ Erreur téléchargement {filename}: {e}")
+        return None
+
+
+_secrets_no_prof_cache = None
+
+def load_secrets_no_prof(force_reload=False):
+    """
+    Charge Fares_secrets_no_prof.yaml (compte Stripe sans split).
+    Même logique que load_secrets mais pour le fichier no-prof.
+    
+    Cherche dans :
+    1. Streamlit Cloud: Google Drive (config/)
+    2. Local: config/Fares_secrets_no_prof.yaml ou racine
+    """
+    global _secrets_no_prof_cache
+    
+    if _secrets_no_prof_cache is not None and not force_reload:
+        return _secrets_no_prof_cache
+    
+    secrets = None
+    filename = "Fares_secrets_no_prof.yaml"
+    
+    # 1. Mode Streamlit Cloud
+    if is_streamlit_cloud():
+        if not YAML_AVAILABLE:
+            return None
+        
+        root_folder_id = None
+        if hasattr(st, 'secrets'):
+            root_folder_id = st.secrets.get("google_drive", {}).get("root_folder_id")
+        if not root_folder_id:
+            root_folder_id = "19Kco_Tu_gZxVgzWuQb5gvB7-7Z3LS-8E"
+        
+        drive_service = _get_drive_service()
+        if drive_service:
+            yaml_content = _download_yaml_from_drive(drive_service, root_folder_id, filename)
+            if yaml_content:
+                try:
+                    secrets = yaml.safe_load(yaml_content)
+                    print(f"✅ {filename} chargé depuis Google Drive")
+                except Exception as e:
+                    print(f"❌ Erreur parsing {filename}: {e}")
+    
+    # 2. Mode local
+    else:
+        if not YAML_AVAILABLE:
+            return None
+        
+        local_paths = [
+            os.path.join(os.path.dirname(__file__), "..", "config", filename),
+            os.path.join(os.path.dirname(__file__), "..", filename),
+            f"config/{filename}",
+            filename,
+        ]
+        
+        for path in local_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        secrets = yaml.safe_load(f)
+                    print(f"✅ {filename} chargé depuis {path}")
+                    break
+                except Exception as e:
+                    print(f"⚠️ Erreur lecture {path}: {e}")
+    
+    _secrets_no_prof_cache = secrets
+    return secrets
