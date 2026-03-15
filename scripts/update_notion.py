@@ -57,7 +57,7 @@ def format_date_title(date_str):
         return date_str
 
 
-def run_update_notion(secrets, data, base_dir, callback=None):
+def run_update_notion(secrets, data, base_dir, callback=None, no_split=False):
     """
     Ajoute les nouvelles lignes dans Notion ET crée les sous-pages profs.
     
@@ -66,6 +66,7 @@ def run_update_notion(secrets, data, base_dir, callback=None):
         data: Données extraites de TutorBird
         base_dir: Dossier racine
         callback: Fonction callback(progress, message)
+        no_split: Si True, pas de colonne prof, pas de sous-pages profs
     
     Returns:
         dict: {"success": bool, "added": int, "skipped": int, "pages_created": int, "error": str}
@@ -294,8 +295,11 @@ def run_update_notion(secrets, data, base_dir, callback=None):
         # ===========================
         # ÉTAPE 3: Charger les pages profs existantes
         # ===========================
-        update(15, "📚 Chargement des pages profs...")
-        load_profs()
+        if not no_split:
+            update(15, "📚 Chargement des pages profs...")
+            load_profs()
+        else:
+            update(15, "📚 Mode no-split : pas de sous-pages profs")
         
         # ===========================
         # ÉTAPE 4: Ajouter les lignes et créer les sous-pages
@@ -372,67 +376,68 @@ def run_update_notion(secrets, data, base_dir, callback=None):
                 existing_keys.add(key)
                 
                 # ===========================
-                # CRÉER LES SOUS-PAGES PROFS
+                # CRÉER LES SOUS-PAGES PROFS (sauf en mode no-split)
                 # ===========================
-                # Grouper les leçons par prof
-                lessons_by_prof = defaultdict(list)
-                for L in lessons_filtered:
-                    teacher = L.get("teacher", "")
-                    if teacher:
-                        lessons_by_prof[teacher].append(L)
-                
-                for teacher_name, teacher_lessons in lessons_by_prof.items():
-                    # Trouver/créer la page prof
-                    prof_id = get_or_create_prof(teacher_name)
-                    if not prof_id:
-                        continue
+                if not no_split:
+                    # Grouper les leçons par prof
+                    lessons_by_prof = defaultdict(list)
+                    for L in lessons_filtered:
+                        teacher = L.get("teacher", "")
+                        if teacher:
+                            lessons_by_prof[teacher].append(L)
                     
-                    # Grouper par élève
-                    lessons_by_student = defaultdict(list)
-                    for L in teacher_lessons:
-                        student = L.get("student", "")
-                        if student:
-                            lessons_by_student[student].append(L)
-                    
-                    for student_name, student_lessons in lessons_by_student.items():
-                        # Trouver la date du cours
-                        lesson_dates = [L.get("date") for L in student_lessons if L.get("date")]
-                        if lesson_dates:
-                            try:
-                                dt = datetime.strptime(lesson_dates[0], "%d.%m.%Y")
-                                date_cours_iso = dt.strftime("%Y-%m-%d")
-                            except:
+                    for teacher_name, teacher_lessons in lessons_by_prof.items():
+                        # Trouver/créer la page prof
+                        prof_id = get_or_create_prof(teacher_name)
+                        if not prof_id:
+                            continue
+                        
+                        # Grouper par élève
+                        lessons_by_student = defaultdict(list)
+                        for L in teacher_lessons:
+                            student = L.get("student", "")
+                            if student:
+                                lessons_by_student[student].append(L)
+                        
+                        for student_name, student_lessons in lessons_by_student.items():
+                            # Trouver la date du cours
+                            lesson_dates = [L.get("date") for L in student_lessons if L.get("date")]
+                            if lesson_dates:
+                                try:
+                                    dt = datetime.strptime(lesson_dates[0], "%d.%m.%Y")
+                                    date_cours_iso = dt.strftime("%Y-%m-%d")
+                                except:
+                                    date_cours_iso = None
+                            else:
                                 date_cours_iso = None
-                        else:
-                            date_cours_iso = None
-                        
-                        if not date_cours_iso:
-                            continue
-                        
-                        # Trouver/créer la page date
-                        date_id, date_title = get_or_create_date(prof_id, date_cours_iso)
-                        if not date_id:
-                            continue
-                        
-                        # Trouver/créer la page élève
-                        student_id, current_title = get_or_create_student(date_id, student_name)
-                        if not student_id:
-                            continue
-                        
-                        # Préparer les données de paiement
-                        payments = []
-                        for L in student_lessons:
-                            payments.append({
-                                "date": L.get("date", ""),
-                                "hours": (L.get("duration_min") or 0) / 60,
-                                "amount": L.get("amount", 0),
-                                "currency": "CHF",
-                            })
-                        
-                        # Mettre à jour la page élève
-                        if current_title is None:  # Page nouvellement créée
-                            update_student_page(student_id, student_name, payments)
-                            pages_created += 1
+                            
+                            if not date_cours_iso:
+                                continue
+                            
+                            # Trouver/créer la page date
+                            date_id, date_title = get_or_create_date(prof_id, date_cours_iso)
+                            if not date_id:
+                                continue
+                            
+                            # Trouver/créer la page élève
+                            student_id, current_title = get_or_create_student(date_id, student_name)
+                            if not student_id:
+                                continue
+                            
+                            # Préparer les données de paiement
+                            payments = []
+                            for L in student_lessons:
+                                payments.append({
+                                    "date": L.get("date", ""),
+                                    "hours": (L.get("duration_min") or 0) / 60,
+                                    "amount": L.get("amount", 0),
+                                    "currency": "CHF",
+                                })
+                            
+                            # Mettre à jour la page élève
+                            if current_title is None:  # Page nouvellement créée
+                                update_student_page(student_id, student_name, payments)
+                                pages_created += 1
         
         # ===========================
         # ÉTAPE 5: Mettre à jour le dashboard
@@ -473,10 +478,9 @@ def run_update_notion(secrets, data, base_dir, callback=None):
         return {"success": False, "error": f"{str(e)}\n{traceback.format_exc()}"}
 
 
-def run_update_notion_selective(secrets, data, invoice_folder_path, selected_family_ids, selected_teachers, callback=None):
+def run_update_notion_selective(secrets, data, invoice_folder_path, selected_family_ids, selected_teachers, callback=None, no_split=False):
     """
     Met à jour les lignes Notion pour certaines familles et certains profs.
-    Utilise la même logique que update_notion_prof_pages pour mettre à jour les sous-pages.
     
     Args:
         secrets: Configuration YAML
@@ -485,6 +489,7 @@ def run_update_notion_selective(secrets, data, invoice_folder_path, selected_fam
         selected_family_ids: Liste des family_id à mettre à jour
         selected_teachers: Liste des noms de profs à mettre à jour
         callback: Fonction callback(progress, message)
+        no_split: Si True, pas de mise à jour des sous-pages profs
     
     Returns:
         dict: {"success": bool, "rows_updated": int, "subpages_updated": int, ...}
@@ -810,8 +815,11 @@ def run_update_notion_selective(secrets, data, invoice_folder_path, selected_fam
         # ===========================
         # ÉTAPE 3: Charger les pages profs
         # ===========================
-        update(25, "📚 Chargement des pages profs...")
-        load_profs()
+        if not no_split:
+            update(25, "📚 Chargement des pages profs...")
+            load_profs()
+        else:
+            update(25, "📚 Mode no-split : pas de sous-pages profs")
         
         # ===========================
         # ÉTAPE 4: Récupérer les données de la DB Notion
@@ -958,76 +966,79 @@ def run_update_notion_selective(secrets, data, invoice_folder_path, selected_fam
                     rows_updated += 1
                     
                     # ===========================
-                    # METTRE À JOUR LES SOUS-PAGES PROFS
+                    # METTRE À JOUR LES SOUS-PAGES PROFS (sauf no-split)
                     # ===========================
-                    for teacher_info in totals["teachers"]:
-                        teacher = teacher_info["teacher"]
-                        date_cours = teacher_info.get("date_cours")
-                        
-                        if not date_cours:
-                            continue
-                        
-                        # Trouver/créer la page prof
-                        prof_id = get_or_create_prof(teacher)
-                        if not prof_id:
-                            continue
-                        
-                        # Trouver/créer la page date
-                        date_id, date_title = get_or_create_date(prof_id, date_cours)
-                        if not date_id:
-                            continue
-                        
-                        # Trouver les élèves concernés dans la famille
-                        fam = data.get(fam_id, {})
-                        lessons = fam.get("lessons", [])
-                        lessons_filtered = [L for L in lessons if L.get("attendance_status") != "AbsentNotice"]
-                        
-                        # Grouper par élève pour ce prof
-                        teacher_norm = normalize_for_match(teacher)
-                        students_lessons = defaultdict(list)
-                        
-                        for L in lessons_filtered:
-                            if SequenceMatcher(None, normalize_for_match(L.get("teacher", "")), teacher_norm).ratio() > 0.7:
-                                student = L.get("student", "")
-                                if student:
-                                    students_lessons[student].append(L)
-                        
-                        for student_name, student_lessons in students_lessons.items():
-                            # Trouver/créer la page élève
-                            student_id, current_title = get_or_create_student(date_id, student_name)
-                            if not student_id:
+                    if not no_split:
+                        for teacher_info in totals["teachers"]:
+                            teacher = teacher_info["teacher"]
+                            date_cours = teacher_info.get("date_cours")
+                            
+                            if not date_cours:
                                 continue
                             
-                            # Chercher les paiements existants pour cet élève dans la DB
-                            student_payments = []
-                            for pdb in payments_db:
-                                if pdb["prof"].lower() == teacher.lower() and names_match(pdb["student"], student_name):
-                                    student_payments.append(pdb)
+                            # Trouver/créer la page prof
+                            prof_id = get_or_create_prof(teacher)
+                            if not prof_id:
+                                continue
                             
-                            # Si pas de paiements existants, créer depuis les leçons
-                            if not student_payments:
-                                for L in student_lessons:
-                                    student_payments.append({
-                                        "id": "",
-                                        "date": L.get("date", ""),
-                                        "heures": f"{(L.get('duration_min') or 0) / 60:.1f}h",
-                                        "real_paid": 0,
-                                        "date_paiement": "",
-                                        "paid": False,
-                                        "student": student_name,
-                                    })
+                            # Trouver/créer la page date
+                            date_id, date_title = get_or_create_date(prof_id, date_cours)
+                            if not date_id:
+                                continue
                             
-                            # Mettre à jour la page élève
-                            paid_count = sum(1 for p in student_payments if p.get("paid"))
-                            update_student_page(student_id, student_name, student_payments, paid_count)
-                            subpages_updated += 1
+                            # Trouver les élèves concernés dans la famille
+                            fam = data.get(fam_id, {})
+                            lessons = fam.get("lessons", [])
+                            lessons_filtered = [L for L in lessons if L.get("attendance_status") != "AbsentNotice"]
                             
-                            # Marquer la date pour mise à jour du récap
-                            dates_to_update_recap.add((prof_id, date_id, teacher, date_cours))
-                        
+                            # Grouper par élève pour ce prof
+                            teacher_norm = normalize_for_match(teacher)
+                            students_lessons = defaultdict(list)
+                            
+                            for L in lessons_filtered:
+                                if SequenceMatcher(None, normalize_for_match(L.get("teacher", "")), teacher_norm).ratio() > 0.7:
+                                    student = L.get("student", "")
+                                    if student:
+                                        students_lessons[student].append(L)
+                            
+                            for student_name, student_lessons in students_lessons.items():
+                                # Trouver/créer la page élève
+                                student_id, current_title = get_or_create_student(date_id, student_name)
+                                if not student_id:
+                                    continue
+                                
+                                # Chercher les paiements existants pour cet élève dans la DB
+                                student_payments = []
+                                for pdb in payments_db:
+                                    if pdb["prof"].lower() == teacher.lower() and names_match(pdb["student"], student_name):
+                                        student_payments.append(pdb)
+                                
+                                # Si pas de paiements existants, créer depuis les leçons
+                                if not student_payments:
+                                    for L in student_lessons:
+                                        student_payments.append({
+                                            "id": "",
+                                            "date": L.get("date", ""),
+                                            "heures": f"{(L.get('duration_min') or 0) / 60:.1f}h",
+                                            "real_paid": 0,
+                                            "date_paiement": "",
+                                            "paid": False,
+                                            "student": student_name,
+                                        })
+                                
+                                # Mettre à jour la page élève
+                                paid_count = sum(1 for p in student_payments if p.get("paid"))
+                                update_student_page(student_id, student_name, student_payments, paid_count)
+                                subpages_updated += 1
+                                
+                                # Marquer la date pour mise à jour du récap
+                                dates_to_update_recap.add((prof_id, date_id, teacher, date_cours))
+                    
+                    # Détails (toujours ajoutés)
+                    for teacher_info in totals["teachers"]:
                         details.append({
                             "family": family_name,
-                            "teacher": teacher,
+                            "teacher": teacher_info["teacher"],
                             "amount": teacher_info["amount"],
                             "currency": "CHF"
                         })
@@ -1035,9 +1046,9 @@ def run_update_notion_selective(secrets, data, invoice_folder_path, selected_fam
                 not_found.append(f"{family_name} (non trouvé dans Notion)")
         
         # ===========================
-        # ÉTAPE 6: Mettre à jour les récaps
+        # ÉTAPE 6: Mettre à jour les récaps (sauf no-split)
         # ===========================
-        if dates_to_update_recap:
+        if not no_split and dates_to_update_recap:
             update(90, f"📊 Mise à jour de {len(dates_to_update_recap)} récap(s)...")
             
             for prof_id, date_id, teacher, date_cours in dates_to_update_recap:

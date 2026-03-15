@@ -8,7 +8,7 @@ import streamlit as st
 import os
 import json
 import yaml
-from scripts.config_loader import load_secrets
+from scripts.config_loader import load_secrets, load_secrets_no_prof
 from datetime import datetime, time, timedelta
 import calendar
 
@@ -261,6 +261,10 @@ with st.sidebar:
         st.session_state.current_page = "accueil"
         st.rerun()
     
+    if st.button("👨‍🏫 Professeurs", key="nav_profs", width="stretch"):
+        st.session_state.current_page = "profs"
+        st.rerun()
+    
     st.markdown('<p class="section-label">📥 EXTRACTION</p>', unsafe_allow_html=True)
     
     if st.button("🗓️ Extraire les leçons", key="nav_extract", width="stretch"):
@@ -325,7 +329,7 @@ with st.sidebar:
 from pages import (
     page_accueil, page_extract, page_twint, page_cleanup,
     page_payment, page_invoices, page_send, page_reminders,
-    page_sync, page_update, page_config
+    page_sync, page_update, page_config, page_profs
 )
 
 # ===========================
@@ -341,6 +345,7 @@ ctx = {
     "save_familles_euros": save_familles_euros,
     "load_tarifs_speciaux": load_tarifs_speciaux,
     "save_tarifs_speciaux": save_tarifs_speciaux,
+    "load_secrets_no_prof": load_secrets_no_prof,
     "load_extracted_data": load_extracted_data,
     "get_latest_invoice_folder": get_latest_invoice_folder,
     "get_month_year_from_folder": get_month_year_from_folder,
@@ -372,5 +377,7 @@ elif page == "update":
     page_update(ctx)
 elif page == "config":
     page_config(ctx)
+elif page == "profs":
+    page_profs(ctx)
 else:
     page_accueil(ctx)

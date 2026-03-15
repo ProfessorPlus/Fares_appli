@@ -177,6 +177,175 @@ def _next_invoice_number(counter_root, invoice_date):
     return f"{invoice_date:%y-%m}-{seq_number}"
 
 
+def _build_invoice_pdf(output_path, items, total_due_display, pay_link_url,
+                       parent_name, logo_path, counter_root, today):
+    """
+    Génère un PDF de facture.
+    
+    Args:
+        output_path: chemin du fichier PDF
+        items: liste de {"date": datetime, "description": str, "amount": float}
+        total_due_display: "123.45 CHF"
+        pay_link_url: URL du lien de paiement
+        parent_name: nom du parent
+        logo_path: chemin du logo
+        counter_root: dossier des compteurs de factures
+        today: datetime du jour
+    """
+    currency = total_due_display.split()[-1] if " " in total_due_display else "CHF"
+    
+    def draw_header(canvas, doc_inner):
+        w, h = A4
+        x_left = LEFT
+        x_right = w - RIGHT
+        y_top = h - TOP + 16 * mm
+
+        if logo_path and os.path.exists(logo_path):
+            img = ImageReader(logo_path)
+            canvas.drawImage(img, x_left, y_top - 26*mm, width=36*mm, height=36*mm, preserveAspectRatio=True)
+
+        canvas.setFillColor(BRAND_BLUE)
+        canvas.setFont(FONT_BOLD, 27)
+        title = "FACTURE"
+        tw = canvas.stringWidth(title, FONT_BOLD, 27)
+        canvas.drawString(x_right - tw, y_top - 6 * mm, title)
+
+    def draw_footer(canvas, doc):
+        w, h = A4
+        bar_h = 12 * mm
+        y = 12 * mm
+
+        canvas.setFillColor(BRAND_BLUE)
+        canvas.rect(LEFT, y, w - LEFT - RIGHT, bar_h, fill=1, stroke=0)
+
+        canvas.setFillColor(colors.white)
+        canvas.setFont(FONT_BOLD, 11)
+        canvas.drawString(LEFT + 5 * mm, y + bar_h/2 - 4, "Soutien scolaire sur-mesure")
+
+        canvas.setFont(FONT_SANS, 10)
+        txt = "Facture"
+        tw = canvas.stringWidth(txt, FONT_SANS, 10)
+        canvas.drawString(w - RIGHT - tw - 5*mm, y + bar_h/2 - 4, txt)
+
+    def on_page(canvas, d):
+        draw_header(canvas, d)
+        draw_footer(canvas, d)
+
+    doc = SimpleDocTemplate(
+        output_path,
+        pagesize=A4,
+        leftMargin=LEFT,
+        rightMargin=RIGHT,
+        topMargin=TOP,
+        bottomMargin=BOTTOM,
+    )
+
+    flow = []
+
+    # Styles
+    st_sub = ParagraphStyle(name="sub", fontName=FONT_BOLD, fontSize=11, leading=13)
+    st_facturer = ParagraphStyle(name="facturer", fontName=FONT_SANS, fontSize=12, leading=14)
+    st_label = ParagraphStyle(name="label", fontName=FONT_BOLD, fontSize=10, alignment=TA_RIGHT)
+    st_value = ParagraphStyle(name="value", fontName=FONT_SANS, fontSize=10, alignment=TA_RIGHT)
+    st_header = ParagraphStyle(name="th", fontName=FONT_BOLD, fontSize=12, alignment=TA_CENTER, textColor=colors.white)
+
+    date_str = today.strftime("%d.%m.%Y")
+    inv_number = _next_invoice_number(counter_root, today)
+
+    # BANDEAU HAUT
+    left_band = Paragraph(TAGLINE_LEFT.replace("\n", "<br/>"), st_sub)
+    middle_band = Paragraph(f"<b>Facturer à :</b><br/>{parent_name}", st_facturer)
+
+    avail = A4[0] - LEFT - RIGHT
+    left_w = 58 * mm
+    mid_w = 54 * mm
+    right_w = avail - left_w - mid_w
+
+    right_band = Table(
+        [
+            [Paragraph("Date :", st_label), "", Paragraph(date_str, st_value)],
+            [Paragraph("Facture n°:", st_label), "", Paragraph(inv_number, st_value)],
+        ],
+        colWidths=[26*mm, 4*mm, right_w - 30*mm],
+    )
+
+    header_row = Table([[left_band, middle_band, right_band]],
+                       colWidths=[left_w, mid_w, right_w])
+    flow.append(header_row)
+    flow.append(Spacer(1, 10 * mm))
+
+    # TABLEAU
+    data_tbl = [
+        [
+            Paragraph("Date", st_header),
+            Paragraph("Description", st_header),
+            Paragraph("Frais", st_header),
+        ]
+    ]
+
+    for item in items:
+        date_cell = item["date"].strftime("%d.%m.%Y") if item["date"] != datetime.min else ""
+        desc_cell = item["description"]
+        amt = float(item["amount"])
+        amount_cell = f"{amt:.2f} {currency}"
+        data_tbl.append([date_cell, desc_cell, amount_cell])
+
+    tbl = Table(
+        data_tbl,
+        colWidths=[30*mm, avail - 60*mm, 30*mm],
+        repeatRows=1,
+    )
+
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), BRAND_BLUE),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN", (0, 0), (-1, 0), "MIDDLE"),
+
+        ("TOPPADDING", (0, 0), (-1, 0), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 14),
+
+        ("VALIGN", (0, 1), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 1), (0, -1), "CENTER"),
+        ("ALIGN", (1, 1), (1, -1), "CENTER"),
+        ("ALIGN", (2, 1), (2, -1), "CENTER"),
+
+        ("TOPPADDING", (0, 1), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 8),
+
+        ("LINEBELOW", (0, 1), (-1, -1), 0.35, colors.lightgrey),
+    ]))
+
+    flow.append(tbl)
+    flow.append(Spacer(1, 18 * mm))
+
+    # TOTAL + BOUTON
+    total_para = TotalTight(f"Total dû : {total_due_display}", spacing=-1.0)
+
+    stack = Table(
+        [
+            [total_para],
+            [PayButton(label="Cliquez ici pour payer en ligne", url=pay_link_url)],
+        ],
+        colWidths=[55 * mm],
+        hAlign="RIGHT",
+    )
+
+    stack.setStyle(TableStyle([
+        ("ALIGN", (0, 0), (0, 0), "CENTER"),
+        ("ALIGN", (0, 1), (0, 1), "CENTER"),
+        ("TOPPADDING", (0, 0), (0, 0), 6),
+    ]))
+
+    flow.append(stack)
+
+    # BUILD PDF
+    try:
+        doc.build(flow, onFirstPage=on_page, onLaterPages=on_page)
+    except:
+        traceback.print_exc()
+
+
 def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, logo_path=None, callback=None, target_folder_path=None):
     """
     Génère les factures PDF.
@@ -252,6 +421,9 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
             for e in links_list:
                 key = (e["family_id"], normalize(e["teacher"]))
                 links_map[key] = e["payment_link"]
+                # Mode no-split : stocker aussi avec clé spéciale famille-only
+                if e.get("mode") == "no_split":
+                    links_map[(e["family_id"], "__no_split__")] = e["payment_link"]
         
         today = datetime.today()
         year_str = today.strftime("%Y")
@@ -276,6 +448,11 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
         liens_manquants = []
         cours_non_factures = 0
         generated_files = []
+        
+        # Détecter si mode no-split actif (au moins un lien no_split existe)
+        is_no_split_mode = any(
+            e.get("mode") == "no_split" for e in (links_list or [])
+        )
         
         total_families = len(data)
         current = 0
@@ -305,20 +482,15 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
             if not lessons_filtered:
                 continue
             
-            # Regrouper par prof
-            by_teacher = {}
-            for L in lessons_filtered:
-                prof_tb = L.get("teacher") or "Professeur"
-                prof_normalized = normalize(prof_tb)
-                yaml_name = TEACHER_MAP.get(prof_normalized, prof_tb)
-                by_teacher.setdefault((prof_tb, yaml_name), []).append(L)
-            
             fam_folder = clean_str(parent_name.replace(" ", "_"))
             fam_base_dir = os.path.join(month_folder_path, fam_folder)
             os.makedirs(fam_base_dir, exist_ok=True)
             
-            for (teacher_display, teacher_yaml), lessons_list in by_teacher.items():
-                lessons_sorted = sorted(lessons_list, key=lambda x: parse_dt(x.get("date", "")))
+            # ===========================
+            # MODE NO-SPLIT : une seule facture par famille
+            # ===========================
+            if is_no_split_mode:
+                lessons_sorted = sorted(lessons_filtered, key=lambda x: parse_dt(x.get("date", "")))
                 
                 items = []
                 total_due = 0.0
@@ -326,8 +498,9 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
                 for L in lessons_sorted:
                     d = parse_dt(L.get("date", ""))
                     student = L.get("student", "")
+                    teacher = L.get("teacher", "Professeur")
                     duration = L.get("duration_min", "")
-                    desc = f"Cours avec {teacher_display} pour {student} ({duration} min)"
+                    desc = f"Cours avec {teacher} pour {student} ({duration} min)"
                     amt = float(L.get("amount", 0) or 0)
                     total_due += amt
                     items.append({"date": d, "description": desc, "amount": amt})
@@ -337,203 +510,116 @@ def run_generate_invoices(data, secrets, familles_euros, data_dir, base_dir, log
                 
                 total_due_display = f"{total_due:.2f} {currency}"
                 
-                # Chercher lien paiement
-                pay_link_url = None
-                teacher_norm = normalize(teacher_display)
-                teacher_search = TEACHER_ALIAS.get(teacher_norm, teacher_norm)
-                
-                # Essai 1
-                key1 = (fam_id, teacher_search)
-                if key1 in links_map:
-                    pay_link_url = links_map[key1]
-                
-                # Essai 2
-                if not pay_link_url:
-                    key2 = (fam_id, normalize(teacher_yaml))
-                    if key2 in links_map:
-                        pay_link_url = links_map[key2]
-                
-                # Essai 3
-                if not pay_link_url:
-                    key3 = (fam_id, teacher_norm)
-                    if key3 in links_map:
-                        pay_link_url = links_map[key3]
-                
-                # Essai 4: recherche approximative
-                if not pay_link_url:
-                    for (link_fam, link_teacher), link_url in links_map.items():
-                        if link_fam == fam_id:
-                            if SequenceMatcher(None, teacher_search, link_teacher).ratio() > 0.8:
-                                pay_link_url = link_url
-                                break
-                            if SequenceMatcher(None, teacher_norm, link_teacher).ratio() > 0.8:
-                                pay_link_url = link_url
-                                break
+                # Lien no-split
+                no_split_key = (fam_id, "__no_split__")
+                pay_link_url = links_map.get(no_split_key)
                 
                 if pay_link_url:
                     liens_trouves += 1
                 else:
                     pay_link_url = "https://example.com"
-                    liens_manquants.append(f"{parent_name} / {teacher_display}")
+                    liens_manquants.append(f"{parent_name} (no-split)")
                 
-                teacher_clean = clean_str(teacher_display.replace(" ", "_"))
-                filename = f"Facture_{year_str}-{today.strftime('%m-%d')}_{teacher_clean}.pdf"
+                filename = f"Facture_{year_str}-{today.strftime('%m-%d')}_tous_profs.pdf"
                 output_path = os.path.join(fam_base_dir, filename)
                 
-                # ---------- GENERATION PDF ----------
-                def draw_header(canvas, doc_inner):
-                    w, h = A4
-                    x_left = LEFT
-                    x_right = w - RIGHT
-                    y_top = h - TOP + 16 * mm
-
-                    if logo_path and os.path.exists(logo_path):
-                        img = ImageReader(logo_path)
-                        canvas.drawImage(img, x_left, y_top - 26*mm, width=36*mm, height=36*mm, preserveAspectRatio=True)
-
-                    canvas.setFillColor(BRAND_BLUE)
-                    canvas.setFont(FONT_BOLD, 27)
-                    title = "FACTURE"
-                    tw = canvas.stringWidth(title, FONT_BOLD, 27)
-                    canvas.drawString(x_right - tw, y_top - 6 * mm, title)
-
-                def draw_footer(canvas, doc):
-                    w, h = A4
-                    bar_h = 12 * mm
-                    y = 12 * mm
-
-                    canvas.setFillColor(BRAND_BLUE)
-                    canvas.rect(LEFT, y, w - LEFT - RIGHT, bar_h, fill=1, stroke=0)
-
-                    canvas.setFillColor(colors.white)
-                    canvas.setFont(FONT_BOLD, 11)
-                    canvas.drawString(LEFT + 5 * mm, y + bar_h/2 - 4, "Soutien scolaire sur-mesure")
-
-                    canvas.setFont(FONT_SANS, 10)
-                    txt = "Facture"
-                    tw = canvas.stringWidth(txt, FONT_SANS, 10)
-                    canvas.drawString(w - RIGHT - tw - 5*mm, y + bar_h/2 - 4, txt)
-
-                def on_page(canvas, d):
-                    draw_header(canvas, d)
-                    draw_footer(canvas, d)
-
-                doc = SimpleDocTemplate(
-                    output_path,
-                    pagesize=A4,
-                    leftMargin=LEFT,
-                    rightMargin=RIGHT,
-                    topMargin=TOP,
-                    bottomMargin=BOTTOM,
+                # Générer le PDF
+                _build_invoice_pdf(
+                    output_path, items, total_due_display, pay_link_url,
+                    parent_name, logo_path, counter_root, today
                 )
-
-                flow = []
-
-                # Styles
-                st_sub = ParagraphStyle(name="sub", fontName=FONT_BOLD, fontSize=11, leading=13)
-                st_facturer = ParagraphStyle(name="facturer", fontName=FONT_SANS, fontSize=12, leading=14)
-                st_label = ParagraphStyle(name="label", fontName=FONT_BOLD, fontSize=10, alignment=TA_RIGHT)
-                st_value = ParagraphStyle(name="value", fontName=FONT_SANS, fontSize=10, alignment=TA_RIGHT)
-                st_header = ParagraphStyle(name="th", fontName=FONT_BOLD, fontSize=12, alignment=TA_CENTER, textColor=colors.white)
-
-                date_str = today.strftime("%d.%m.%Y")
-                inv_number = _next_invoice_number(counter_root, today)
-
-                # BANDEAU HAUT
-                left_band = Paragraph(TAGLINE_LEFT.replace("\n", "<br/>"), st_sub)
-                middle_band = Paragraph(f"<b>Facturer à :</b><br/>{parent_name}", st_facturer)
-
-                avail = A4[0] - LEFT - RIGHT
-                left_w = 58 * mm
-                mid_w = 54 * mm
-                right_w = avail - left_w - mid_w
-
-                right_band = Table(
-                    [
-                        [Paragraph("Date :", st_label), "", Paragraph(date_str, st_value)],
-                        [Paragraph("Facture n°:", st_label), "", Paragraph(inv_number, st_value)],
-                    ],
-                    colWidths=[26*mm, 4*mm, right_w - 30*mm],
-                )
-
-                header_row = Table([[left_band, middle_band, right_band]],
-                                   colWidths=[left_w, mid_w, right_w])
-                flow.append(header_row)
-                flow.append(Spacer(1, 10 * mm))
-
-                # TABLEAU
-                data_tbl = [
-                    [
-                        Paragraph("Date", st_header),
-                        Paragraph("Description", st_header),
-                        Paragraph("Frais", st_header),
-                    ]
-                ]
-
-                for item in items:
-                    date_cell = item["date"].strftime("%d.%m.%Y") if item["date"] != datetime.min else ""
-                    desc_cell = item["description"]
-                    amt = float(item["amount"])
-                    amount_cell = f"{amt:.2f} {currency}"
-                    data_tbl.append([date_cell, desc_cell, amount_cell])
-
-                tbl = Table(
-                    data_tbl,
-                    colWidths=[30*mm, avail - 60*mm, 30*mm],
-                    repeatRows=1,
-                )
-
-                tbl.setStyle(TableStyle([
-                    ("BACKGROUND", (0, 0), (-1, 0), BRAND_BLUE),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-                    ("VALIGN", (0, 0), (-1, 0), "MIDDLE"),
-
-                    ("TOPPADDING", (0, 0), (-1, 0), 14),
-                    ("BOTTOMPADDING", (0, 0), (-1, 0), 14),
-
-                    ("VALIGN", (0, 1), (-1, -1), "MIDDLE"),
-                    ("ALIGN", (0, 1), (0, -1), "CENTER"),
-                    ("ALIGN", (1, 1), (1, -1), "CENTER"),
-                    ("ALIGN", (2, 1), (2, -1), "CENTER"),
-
-                    ("TOPPADDING", (0, 1), (-1, -1), 8),
-                    ("BOTTOMPADDING", (0, 1), (-1, -1), 8),
-
-                    ("LINEBELOW", (0, 1), (-1, -1), 0.35, colors.lightgrey),
-                ]))
-
-                flow.append(tbl)
-                flow.append(Spacer(1, 18 * mm))
-
-                # TOTAL + BOUTON
-                total_para = TotalTight(f"Total dû : {total_due_display}", spacing=-1.0)
-
-                stack = Table(
-                    [
-                        [total_para],
-                        [PayButton(label="Cliquez ici pour payer en ligne", url=pay_link_url)],
-                    ],
-                    colWidths=[55 * mm],
-                    hAlign="RIGHT",
-                )
-
-                stack.setStyle(TableStyle([
-                    ("ALIGN", (0, 0), (0, 0), "CENTER"),
-                    ("ALIGN", (0, 1), (0, 1), "CENTER"),
-                    ("TOPPADDING", (0, 0), (0, 0), 6),
-                ]))
-
-                flow.append(stack)
-
-                # BUILD PDF
-                try:
-                    doc.build(flow, onFirstPage=on_page, onLaterPages=on_page)
+                factures_generees += 1
+                generated_files.append(output_path)
+            
+            # ===========================
+            # MODE NORMAL : une facture par famille/prof
+            # ===========================
+            else:
+                # Regrouper par prof
+                by_teacher = {}
+                for L in lessons_filtered:
+                    prof_tb = L.get("teacher") or "Professeur"
+                    prof_normalized = normalize(prof_tb)
+                    yaml_name = TEACHER_MAP.get(prof_normalized, prof_tb)
+                    by_teacher.setdefault((prof_tb, yaml_name), []).append(L)
+                
+                for (teacher_display, teacher_yaml), lessons_list in by_teacher.items():
+                    lessons_sorted = sorted(lessons_list, key=lambda x: parse_dt(x.get("date", "")))
+                    
+                    items = []
+                    total_due = 0.0
+                    
+                    for L in lessons_sorted:
+                        d = parse_dt(L.get("date", ""))
+                        student = L.get("student", "")
+                        duration = L.get("duration_min", "")
+                        desc = f"Cours avec {teacher_display} pour {student} ({duration} min)"
+                        amt = float(L.get("amount", 0) or 0)
+                        total_due += amt
+                        items.append({"date": d, "description": desc, "amount": amt})
+                    
+                    if total_due <= 0:
+                        continue
+                    
+                    total_due_display = f"{total_due:.2f} {currency}"
+                    
+                    # Chercher lien paiement
+                    pay_link_url = None
+                    teacher_norm = normalize(teacher_display)
+                    teacher_search = TEACHER_ALIAS.get(teacher_norm, teacher_norm)
+                    
+                    # Essai 1
+                    key1 = (fam_id, teacher_search)
+                    if key1 in links_map:
+                        pay_link_url = links_map[key1]
+                    
+                    # Essai 2
+                    if not pay_link_url:
+                        key2 = (fam_id, normalize(teacher_yaml))
+                        if key2 in links_map:
+                            pay_link_url = links_map[key2]
+                    
+                    # Essai 3
+                    if not pay_link_url:
+                        key3 = (fam_id, teacher_norm)
+                        if key3 in links_map:
+                            pay_link_url = links_map[key3]
+                    
+                    # Essai 4: recherche approximative
+                    if not pay_link_url:
+                        for (link_fam, link_teacher), link_url in links_map.items():
+                            if link_fam == fam_id:
+                                if SequenceMatcher(None, teacher_search, link_teacher).ratio() > 0.8:
+                                    pay_link_url = link_url
+                                    break
+                                if SequenceMatcher(None, teacher_norm, link_teacher).ratio() > 0.8:
+                                    pay_link_url = link_url
+                                    break
+                    
+                    # Essai 5: fallback mode no-split
+                    if not pay_link_url:
+                        no_split_key = (fam_id, "__no_split__")
+                        if no_split_key in links_map:
+                            pay_link_url = links_map[no_split_key]
+                    
+                    if pay_link_url:
+                        liens_trouves += 1
+                    else:
+                        pay_link_url = "https://example.com"
+                        liens_manquants.append(f"{parent_name} / {teacher_display}")
+                    
+                    teacher_clean = clean_str(teacher_display.replace(" ", "_"))
+                    filename = f"Facture_{year_str}-{today.strftime('%m-%d')}_{teacher_clean}.pdf"
+                    output_path = os.path.join(fam_base_dir, filename)
+                    
+                    # Générer le PDF
+                    _build_invoice_pdf(
+                        output_path, items, total_due_display, pay_link_url,
+                        parent_name, logo_path, counter_root, today
+                    )
                     factures_generees += 1
                     generated_files.append(output_path)
-                except:
-                    traceback.print_exc()
-        
+                
         # ===============================
         # UPLOAD VERS GOOGLE DRIVE (si cloud)
         # ===============================
