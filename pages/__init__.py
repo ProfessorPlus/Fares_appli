@@ -1515,7 +1515,7 @@ def page_update(ctx):
     with tab3:
         st.markdown("### 🔍 Ajouter ligne(s) manquante(s)")
 
-        if noif not latest or latest is None:
+        if not latest or latest is None:
             st.error("❌ Aucun dossier de factures trouvé. Veuillez d'abord générer des factures.")
         
         else:
