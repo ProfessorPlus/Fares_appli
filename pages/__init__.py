@@ -19,6 +19,10 @@ from scripts.sync_stripe_notion import run_sync_stripe_notion
 from scripts.activate_twint import get_twint_status, activate_twint_for_accounts
 from scripts.cleanup_notion import run_cleanup_duplicates, run_scan_notion_dates, run_delete_old_rows
 from scripts.send_payment_reminders import run_send_reminders, get_default_reminder_template, get_unpaid_families_from_notion, should_send_automatic_reminder
+from scripts.recap_profs import compute_teacher_recap
+from scripts.generate_prof_pdfs import generate_all_pdfs_to_bytes, generate_single_pdf_to_bytes, generate_all_pdfs_as_zip
+from scripts.create_payment_links_no_split import run_create_payment_links_no_split
+from scripts.no_prof_sync_stripe_notion import run_sync_stripe_notion_no_split
 
 
 def page_accueil(ctx):
@@ -558,10 +562,10 @@ def page_payment(ctx):
             return
         
         # Options communes (On Behalf Of + Méthodes paiement)
-        use_on_behalf, selected_teachers, payment_method_types = _render_payment_options(ctx, secrets, "tab1")
+        use_on_behalf, selected_teachers, payment_method_types, no_split_mode, secrets_no_prof = _render_payment_options(ctx, secrets, "tab1")
         
-        # Bouton Relancer manquants (seulement si rapport affiché)
-        if st.session_state.get("show_payment_report") and os.path.exists(report_path):
+        # Bouton Relancer manquants (seulement si rapport affiché et mode normal)
+        if not no_split_mode and st.session_state.get("show_payment_report") and os.path.exists(report_path):
             with open(report_path, "r", encoding="utf-8") as f:
                 report = json.load(f)
             missing_families = report.get("missing_families", [])
@@ -610,14 +614,32 @@ def page_payment(ctx):
                 progress.progress(p)
                 status.info(m)
             
-            result = run_create_payment_links(
-                data, secrets, familles_euros, tarifs_speciaux,
-                use_on_behalf, selected_teachers, ctx["DATA_DIR"], callback,
-                payment_method_types=payment_method_types,
-            )
+            # Mode sans transfert
+            if no_split_mode:
+                if not secrets_no_prof:
+                    st.error("❌ secrets_no_prof.yaml manquant !")
+                else:
+                    result = run_create_payment_links_no_split(
+                        data, secrets_no_prof, familles_euros,
+                        ctx["DATA_DIR"], callback,
+                        payment_method_types=payment_method_types,
+                    )
+                    
+                    if result["success"]:
+                        st.success(f"✅ **{result['links_count']}** liens créés (mode sans transfert)")
+                    else:
+                        st.error(f"❌ Erreur : {result['error']}")
+            else:
+                # Mode normal avec split
+                result = run_create_payment_links(
+                    data, secrets, familles_euros, tarifs_speciaux,
+                    use_on_behalf, selected_teachers, ctx["DATA_DIR"], callback,
+                    payment_method_types=payment_method_types,
+                )
             
             if result["success"]:
-                st.session_state.show_payment_report = True  # Activer l'affichage du rapport
+                st.session_state.show_payment_report = True
+                st.session_state.no_split_mode_active = no_split_mode  # Mémoriser le mode
                 st.rerun()
             else:
                 st.error(f"❌ Erreur : {result['error']}")
@@ -674,7 +696,7 @@ def page_payment(ctx):
             st.info(f"📊 **{len(selected_family_ids)}** famille(s) sélectionnée(s)")
             
             # Options
-            use_on_behalf_t2, selected_teachers_t2, payment_method_types_t2 = _render_payment_options(ctx, secrets, "tab2")
+            use_on_behalf_t2, selected_teachers_t2, payment_method_types_t2, no_split_t2, secrets_no_prof_t2 = _render_payment_options(ctx, secrets, "tab2")
             
             if st.button("🔄 Régénérer les liens sélectionnés", type="primary", width="stretch", key="regen_selected"):
                 familles_euros = ctx["load_familles_euros"]()
@@ -687,13 +709,25 @@ def page_payment(ctx):
                     progress.progress(p)
                     status.info(m)
                 
-                result = run_create_payment_links(
-                    data, secrets, familles_euros, tarifs_speciaux,
-                    use_on_behalf_t2, selected_teachers_t2, ctx["DATA_DIR"], callback,
-                    payment_method_types=payment_method_types_t2,
-                    target_family_ids=selected_family_ids,
-                    skip_if_exists=False,  # Forcer la régénération
-                )
+                if no_split_t2:
+                    if not secrets_no_prof_t2:
+                        st.error("❌ secrets_no_prof.yaml manquant !")
+                    else:
+                        result = run_create_payment_links_no_split(
+                            data, secrets_no_prof_t2, familles_euros,
+                            ctx["DATA_DIR"], callback,
+                            payment_method_types=payment_method_types_t2,
+                            target_family_ids=selected_family_ids,
+                            skip_if_exists=False,
+                        )
+                else:
+                    result = run_create_payment_links(
+                        data, secrets, familles_euros, tarifs_speciaux,
+                        use_on_behalf_t2, selected_teachers_t2, ctx["DATA_DIR"], callback,
+                        payment_method_types=payment_method_types_t2,
+                        target_family_ids=selected_family_ids,
+                        skip_if_exists=False,  # Forcer la régénération
+                    )
                 
                 if result["success"]:
                     st.session_state.regenerated_families = selected_family_ids
@@ -716,26 +750,25 @@ def page_payment(ctx):
             st.warning("⚠️ Sélectionnez au moins une famille.")
 
 def _render_payment_options(ctx, secrets, prefix):
-    """Rend les options de paiement (On Behalf Of + Méthodes) et retourne les valeurs."""
+    """Rend les options de paiement (On Behalf Of + Méthodes) et retourne les valeurs.
     
-    # Options On Behalf Of
-    st.markdown("### 👨‍🏫 On Behalf Of")
+    Returns:
+        tuple: (use_on_behalf, selected_teachers, payment_method_types, no_split_mode, secrets_no_prof)
+    """
     
-    use_on_behalf = st.checkbox("🔄 Activer On Behalf Of", value=True, key=f"use_on_behalf_{prefix}")
+    # ===========================
+    # MODE SANS TRANSFERT
+    # ===========================
+    st.markdown("### 💰 Mode de paiement")
     
-    selected_teachers = []
-    if use_on_behalf:
-        teachers = secrets.get("teachers", {})
-        teachers_with_connect = [n for n, i in teachers.items() if i.get("connect_account_id")]
-        
-        selected_teachers = st.multiselect(
-            "Professeurs pour On Behalf Of",
-            teachers_with_connect,
-            default=teachers_with_connect,
-            key=f"selected_teachers_{prefix}"
-        )
+    no_split_mode = st.toggle(
+        "🏦 Tout recevoir sur mon compte (sans transfert aux profs)",
+        value=False,
+        key=f"no_split_{prefix}",
+        help="Active le mode sans split : tous les paiements vont directement sur votre compte Stripe principal (utilise secrets_no_prof.yaml)"
+    )
     
-    # Méthodes de paiement avec tooltip pour Revolut
+    # Méthodes de paiement (communes aux deux modes)
     st.markdown("### 💳 Méthodes de paiement")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -749,7 +782,6 @@ def _render_payment_options(ctx, secrets, prefix):
         pm_google = st.checkbox("🤖 Google Pay", value=True, key=f"pm_google_{prefix}")
 
     with col3:
-        # Revolut avec tooltip
         col_rev, col_help = st.columns([4, 1])
         with col_rev:
             pm_revolut = st.checkbox("🔄 Revolut Pay", value=True, key=f"pm_revolut_{prefix}")
@@ -778,7 +810,35 @@ def _render_payment_options(ctx, secrets, prefix):
     
     st.warning("⚠️ Vérifiez dans les paramètres Stripe que ces méthodes sont bien actives !")
     
-    return use_on_behalf, selected_teachers, payment_method_types
+    if no_split_mode:
+        st.warning("⚠️ **Mode sans transfert activé** — Aucun split ne sera créé. Tous les paiements iront sur le compte Stripe défini dans `secrets_no_prof.yaml`.")
+        
+        secrets_no_prof = ctx.get("load_secrets_no_prof", lambda: None)()
+        if not secrets_no_prof:
+            st.error("❌ `secrets_no_prof.yaml` non trouvé dans config/ ou à la racine du projet.")
+            st.info("Créez ce fichier avec votre clé Stripe alternative (même structure que secrets.yaml mais sans teachers).")
+            return None, None, payment_method_types, True, None
+        
+        return None, None, payment_method_types, True, secrets_no_prof
+    
+    # --- Mode normal avec split ---
+    st.markdown("### 👨‍🏫 On Behalf Of")
+    
+    use_on_behalf = st.checkbox("🔄 Activer On Behalf Of", value=True, key=f"use_on_behalf_{prefix}")
+    
+    selected_teachers = []
+    if use_on_behalf:
+        teachers = secrets.get("teachers", {})
+        teachers_with_connect = [n for n, i in teachers.items() if i.get("connect_account_id")]
+        
+        selected_teachers = st.multiselect(
+            "Professeurs pour On Behalf Of",
+            teachers_with_connect,
+            default=teachers_with_connect,
+            key=f"selected_teachers_{prefix}"
+        )
+    
+    return use_on_behalf, selected_teachers, payment_method_types, False, None
 
 
 def page_invoices(ctx):
@@ -1201,6 +1261,12 @@ def page_sync(ctx):
     secrets = ctx["load_secrets"]()
     latest = ctx["get_latest_invoice_folder"]()
     
+    # Détecter le mode no-split
+    is_no_split = st.session_state.get("no_split_mode_active", False)
+    
+    if is_no_split:
+        st.info("🏦 **Mode sans transfert détecté** — Sync simplifiée (famille + montant, pas de pages profs)")
+    
     use_latest = st.checkbox("📅 Depuis le dernier dossier de factures", value=True)
     
     if use_latest and latest:
@@ -1214,60 +1280,95 @@ def page_sync(ctx):
         progress = st.progress(0)
         status = st.empty()
         
-        # ===========================
-        # ÉTAPE 1: Sync Stripe → Notion (marquer Payé)
-        # ===========================
-        def callback1(p, m):
-            progress.progress(int(p * 0.5))
-            status.info(f"[1/2] {m}")
-        
-        from scripts.sync_stripe_notion import run_sync_stripe_notion
-        result1 = run_sync_stripe_notion(secrets, since_date, callback1)
-        
-        if not result1["success"]:
-            st.error(f"❌ Erreur sync Stripe : {result1['error']}")
-            return
-        
-        # ===========================
-        # ÉTAPE 2: Mise à jour des pages profs
-        # ===========================
-        def callback2(p, m):
-            progress.progress(50 + int(p * 0.5))
-            status.info(f"[2/2] {m}")
-        
-        from scripts.update_notion_prof_pages import run_update_notion_prof_pages
-        result2 = run_update_notion_prof_pages(secrets, callback2, force=False, latest_only=False)
-        
-        progress.progress(100)
-        status.empty()
-        
-        # ===========================
-        # Affichage des résultats
-        # ===========================
-        if result1["success"] and result2["success"]:
-            st.success(f"""
-            ✅ **Synchronisation terminée**
+        if is_no_split:
+            # ===========================
+            # MODE NO-SPLIT : sync simplifiée
+            # ===========================
+            def callback_ns(p, m):
+                progress.progress(p)
+                status.info(m)
             
-            **Stripe → Notion :**
-            - {result1['synced']} paiement(s) synchronisé(s)
-            - {result1['already_paid']} déjà marqué(s) payé(s)
-            - {result1.get('student_unknown', 0)} élève(s) inconnu(s) (reçu vide)
-            - {result1['total_not_found']} non trouvé(s) dans Notion
+            secrets_no_prof = ctx.get("load_secrets_no_prof", lambda: None)()
+            if not secrets_no_prof:
+                st.error("❌ secrets_no_prof.yaml non trouvé !")
+                return
             
-            **Pages professeurs :**
-            - {result2['updated']} page(s) mise(s) à jour
-            - {result2['skipped']} page(s) déjà à jour
-            - {result2['recaps_updated']} récap(s) mis à jour
-            """)
+            result1 = run_sync_stripe_notion_no_split(secrets_no_prof, secrets, since_date, callback_ns)
             
-            if result1.get("not_found"):
-                with st.expander("⚠️ Paiements non trouvés dans Notion"):
-                    for nf in result1["not_found"]:
-                        st.write(f"• {nf}")
+            progress.progress(100)
+            status.empty()
+            
+            if result1["success"]:
+                st.success(f"""
+                ✅ **Synchronisation no-split terminée**
+                
+                - {result1['synced']} paiement(s) synchronisé(s)
+                - {result1['already_paid']} déjà marqué(s) payé(s)
+                - {result1['total_not_found']} non trouvé(s) dans Notion
+                """)
+                
+                if result1.get("not_found"):
+                    with st.expander("⚠️ Paiements non trouvés dans Notion"):
+                        for nf in result1["not_found"]:
+                            st.write(f"• {nf}")
+            else:
+                st.error(f"❌ Erreur : {result1['error']}")
         
-        elif result2 and not result2["success"]:
-            st.warning(f"""
-            ⚠️ **Sync Stripe OK, mais erreur pages profs**
+        else:
+            # ===========================
+            # MODE NORMAL : sync avec pages profs
+            # ===========================
+            def callback1(p, m):
+                progress.progress(int(p * 0.5))
+                status.info(f"[1/2] {m}")
+            
+            from scripts.sync_stripe_notion import run_sync_stripe_notion
+            result1 = run_sync_stripe_notion(secrets, since_date, callback1)
+            
+            if not result1["success"]:
+                st.error(f"❌ Erreur sync Stripe : {result1['error']}")
+                return
+            
+            # ===========================
+            # ÉTAPE 2: Mise à jour des pages profs
+            # ===========================
+            def callback2(p, m):
+                progress.progress(50 + int(p * 0.5))
+                status.info(f"[2/2] {m}")
+            
+            from scripts.update_notion_prof_pages import run_update_notion_prof_pages
+            result2 = run_update_notion_prof_pages(secrets, callback2, force=False, latest_only=False)
+            
+            progress.progress(100)
+            status.empty()
+            
+            # ===========================
+            # Affichage des résultats
+            # ===========================
+            if result1["success"] and result2["success"]:
+                st.success(f"""
+                ✅ **Synchronisation terminée**
+                
+                **Stripe → Notion :**
+                - {result1['synced']} paiement(s) synchronisé(s)
+                - {result1['already_paid']} déjà marqué(s) payé(s)
+                - {result1.get('student_unknown', 0)} élève(s) inconnu(s) (reçu vide)
+                - {result1['total_not_found']} non trouvé(s) dans Notion
+                
+                **Pages professeurs :**
+                - {result2['updated']} page(s) mise(s) à jour
+                - {result2['skipped']} page(s) déjà à jour
+                - {result2['recaps_updated']} récap(s) mis à jour
+                """)
+                
+                if result1.get("not_found"):
+                    with st.expander("⚠️ Paiements non trouvés dans Notion"):
+                        for nf in result1["not_found"]:
+                            st.write(f"• {nf}")
+            
+            elif result2 and not result2["success"]:
+                st.warning(f"""
+                ⚠️ **Sync Stripe OK, mais erreur pages profs**
             
             **Stripe → Notion :**
             - {result1['synced']} paiement(s) synchronisé(s)
@@ -1294,6 +1395,12 @@ def page_update(ctx):
         st.warning("⚠️ Aucune donnée extraite")
         return
     
+    # Détecter le mode no-split
+    is_no_split = st.session_state.get("no_split_mode_active", False)
+    
+    if is_no_split:
+        st.info("🏦 **Mode sans transfert actif** — Les lignes seront ajoutées sans colonne prof et sans sous-pages profs.")
+    
     # Onglets
     default_tab = 1 if st.session_state.get("update_tab") == "selective" else 0
     tab1, tab2, tab3 = st.tabs(["➕ Ajouter toutes les lignes", "🔄 Mettre à jour certaines lignes", "🔍 Ajouter ligne(s) manquante(s)"])
@@ -1302,15 +1409,26 @@ def page_update(ctx):
     # TAB 1: Ajouter toutes les lignes
     # ===========================
     with tab1:
-        st.info(f"""
-        **Cette action va :**
-        1. Ajouter **{len(data)}** lignes dans la base de données Paiements
-        2. Créer les sous-pages dans les pages des professeurs (Prof → Date → Élève)
-        
-        📁 Basé sur le dernier dossier : **{latest['name'] if latest else 'N/A'}**
-        
-        ⚠️ Les lignes déjà existantes (même famille + même montant) seront ignorées.
-        """)
+        if is_no_split:
+            st.info(f"""
+            **Cette action va :**
+            1. Ajouter **{len(data)}** lignes dans la base de données Paiements
+            2. **Pas de sous-pages profs** (mode sans transfert)
+            
+            📁 Basé sur le dernier dossier : **{latest['name'] if latest else 'N/A'}**
+            
+            ⚠️ Les lignes déjà existantes (même famille + même montant) seront ignorées.
+            """)
+        else:
+            st.info(f"""
+            **Cette action va :**
+            1. Ajouter **{len(data)}** lignes dans la base de données Paiements
+            2. Créer les sous-pages dans les pages des professeurs (Prof → Date → Élève)
+            
+            📁 Basé sur le dernier dossier : **{latest['name'] if latest else 'N/A'}**
+            
+            ⚠️ Les lignes déjà existantes (même famille + même montant) seront ignorées.
+            """)
         
         if st.button("📤 Ajouter les lignes", type="primary", width="stretch", key="add_all_notion"):
             progress = st.progress(0)
@@ -1320,7 +1438,7 @@ def page_update(ctx):
                 progress.progress(p)
                 status.info(m)
             
-            result = run_update_notion(secrets, data, ctx["BASE_DIR"], callback)
+            result = run_update_notion(secrets, data, ctx["BASE_DIR"], callback, no_split=is_no_split)
             
             if result["success"]:
                 st.success(f"""
@@ -1477,7 +1595,8 @@ def page_update(ctx):
                     latest["path"],
                     selected_family_ids,
                     selected_teachers,
-                    callback
+                    callback,
+                    no_split=is_no_split
                 )
                 
                 if result["success"]:
@@ -2096,3 +2215,204 @@ def page_config(ctx):
             secrets["gmail"]["app_password"] = app_password
             ctx["save_secrets"](secrets)
             st.success("✅ Configuration email sauvegardée !")
+
+def page_profs(ctx):
+    import streamlit as st
+    import os
+    from datetime import datetime
+
+    st.markdown('<div class="section-title">👨‍🏫 Récapitulatif Professeurs</div>', unsafe_allow_html=True)
+
+    data = ctx["load_extracted_data"]()
+    secrets = ctx["load_secrets"]()
+
+    if not data:
+        st.warning("⚠️ Aucune donnée extraite. Lancez d'abord une extraction TutorBird.")
+        return
+
+    if not secrets:
+        st.error("❌ Fichier secrets.yaml non trouvé !")
+        return
+
+    familles_euros = ctx["load_familles_euros"]()
+    tarifs_speciaux = ctx["load_tarifs_speciaux"]()
+
+    # Import local
+    from scripts.recap_profs import compute_teacher_recap
+    from scripts.generate_prof_pdfs import generate_all_pdfs_to_bytes, generate_single_pdf_to_bytes, generate_all_pdfs_as_zip
+
+    # Calculer le récap
+    recap = compute_teacher_recap(data, secrets, familles_euros, tarifs_speciaux)
+    teachers = recap["teachers"]
+    grand_total = recap["grand_total"]
+
+    # Déterminer le mois depuis les données
+    MONTHS_FR = ctx["MONTHS_FR"]
+    all_dates = []
+    for fam in data.values():
+        for l in fam.get("lessons", []):
+            d = l.get("date", "")
+            if d:
+                all_dates.append(d)
+
+    if all_dates:
+        try:
+            first_date = datetime.strptime(all_dates[0], "%d.%m.%Y")
+            mois_label = f"{MONTHS_FR[first_date.month - 1]} {first_date.year}"
+        except Exception:
+            mois_label = "Période en cours"
+    else:
+        mois_label = "Période en cours"
+
+    # ===========================
+    # HEADER
+    # ===========================
+    st.markdown(f"""
+    <div class="header-card">
+        <h1>💰 Paie des professeurs — {mois_label}</h1>
+        <p>Tout en CHF  •  Total : {grand_total:.2f} CHF</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Stats globales
+    col1, col2, col3 = st.columns(3)
+    nb_profs = len([t for t in teachers.values() if t["nb_lessons"] > 0])
+
+    with col1:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">👨‍🏫 Professeurs actifs</div>
+            <div class="stat-value">{nb_profs}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">📚 Leçons payables</div>
+            <div class="stat-value">{recap['total_lessons']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col3:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">💰 Grand total</div>
+            <div class="stat-value">{grand_total:,.2f} CHF</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ===========================
+    # TABLEAU RÉCAP PAR PROF
+    # ===========================
+    st.markdown('<div class="section-title">📊 Détail par professeur</div>', unsafe_allow_html=True)
+
+    # Logo (cherché une seule fois)
+    candidates = [
+        os.path.join(ctx["BASE_DIR"], "Professor_logo_dernier.png"),
+        os.path.join(ctx["BASE_DIR"], "assets", "logo.png"),
+    ]
+    logo_path = next((p for p in candidates if os.path.exists(p)), None)
+
+    for tname in sorted(teachers.keys()):
+        tdata = teachers[tname]
+        if tdata["nb_lessons"] == 0:
+            continue
+
+        total = tdata["chf"]
+
+        with st.expander(f"🧑‍🏫 **{tname}** — {tdata['nb_lessons']} leçons — **{total:.2f} CHF**", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.metric("Leçons", tdata["nb_lessons"])
+            with c2:
+                st.metric("TOTAL", f"{total:.2f} CHF")
+
+            # Tableau des leçons
+            sorted_details = sorted(tdata["details"], key=lambda x: x["date"])
+            table_rows = []
+            for d in sorted_details:
+                table_rows.append({
+                    "Date": d["date"],
+                    "Élève": d["student"],
+                    "Durée": f"{d['duration_min']} min",
+                    "Taux": d["rate"],
+                    "Montant CHF": f"{d['amount_eur']:.2f}",
+                })
+
+            st.dataframe(table_rows, hide_index=True, use_container_width=True)
+
+            # Bouton téléchargement individuel
+            safe_name = tname.replace(" ", "_")
+            filename = f"Paie_{safe_name}_{mois_label.replace(' ', '_')}.pdf"
+
+            pdf_bytes = generate_single_pdf_to_bytes(tname, tdata, mois_label, logo_path)
+            st.download_button(
+                label=f"📥 Télécharger le PDF de {tname}",
+                data=pdf_bytes,
+                file_name=filename,
+                mime="application/pdf",
+                key=f"dl_pdf_{safe_name}",
+            )
+
+    # ===========================
+    # TÉLÉCHARGEMENTS GLOBAUX
+    # ===========================
+    st.markdown("---")
+    st.markdown('<div class="section-title">📥 Télécharger toutes les fiches</div>', unsafe_allow_html=True)
+
+    col_zip, col_combined = st.columns(2)
+
+    with col_zip:
+        if st.button("📦 Générer le ZIP (1 PDF par prof)", type="primary", width="stretch", key="gen_zip"):
+            with st.spinner("Génération du ZIP..."):
+                zip_bytes = generate_all_pdfs_as_zip(
+                    teachers, mois_label,
+                    logo_path=logo_path,
+                    exclude_owner="Fares Chouchene",
+                )
+                if zip_bytes:
+                    st.session_state.prof_zip_bytes = zip_bytes
+                    st.session_state.prof_zip_filename = f"Paie_Profs_{mois_label.replace(' ', '_')}.zip"
+                    st.success("✅ ZIP généré !")
+                    st.rerun()
+
+    with col_combined:
+        if st.button("📄 Générer le PDF combiné (tout en un)", width="stretch", key="gen_combined"):
+            with st.spinner("Génération du PDF..."):
+                pdf_bytes = generate_all_pdfs_to_bytes(
+                    teachers, mois_label,
+                    logo_path=logo_path,
+                    exclude_owner="Fares Chouchene",
+                )
+                if pdf_bytes:
+                    st.session_state.prof_pdf_bytes = pdf_bytes
+                    st.session_state.prof_pdf_filename = f"Paie_Profs_{mois_label.replace(' ', '_')}.pdf"
+                    st.success("✅ PDF généré !")
+                    st.rerun()
+
+    # Boutons de téléchargement
+    dl1, dl2 = st.columns(2)
+
+    with dl1:
+        if st.session_state.get("prof_zip_bytes"):
+            st.download_button(
+                label="📥 Télécharger le ZIP",
+                data=st.session_state.prof_zip_bytes,
+                file_name=st.session_state.get("prof_zip_filename", "paie_profs.zip"),
+                mime="application/zip",
+                type="primary",
+                key="dl_zip_final",
+            )
+
+    with dl2:
+        if st.session_state.get("prof_pdf_bytes"):
+            st.download_button(
+                label="📥 Télécharger le PDF combiné",
+                data=st.session_state.prof_pdf_bytes,
+                file_name=st.session_state.get("prof_pdf_filename", "paie_profs.pdf"),
+                mime="application/pdf",
+                key="dl_pdf_final",
+            )
