@@ -1,7 +1,6 @@
 """
-📄 Generate Prof PDFs - VERSION FARES
-Génère un PDF par professeur avec le détail des leçons en CHF.
-Pas de conversion EUR — tout est en CHF.
+📄 Generate Prof PDFs - Design Lovable (VERSION FARES)
+Tout en CHF — pas de conversion EUR.
 """
 
 import os
@@ -9,160 +8,329 @@ import io
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
-    Image, PageBreak
-)
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 
-HEADER_BG = colors.HexColor("#1F3A67")
-ROW_ALT = colors.HexColor("#f5f5f5")
-BORDER_COLOR = colors.HexColor("#bdbdbd")
-ACCENT = colors.HexColor("#1F3A67")
+# ===========================
+# FONTS
+# ===========================
+def _init_fonts():
+    paths = [
+        ("Sans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        ("SansBd", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    ]
+    for name, path in paths:
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+            except Exception:
+                pass
+    try:
+        pdfmetrics.getFont("Sans")
+        return "Sans", "SansBd"
+    except Exception:
+        return "Helvetica", "Helvetica-Bold"
 
 
-def _build_styles():
-    styles = getSampleStyleSheet()
-    return {
-        "title": ParagraphStyle("CustomTitle", parent=styles["Title"], fontSize=20, spaceAfter=4, textColor=ACCENT),
-        "subtitle": ParagraphStyle("Subtitle", parent=styles["Normal"], fontSize=11, spaceAfter=4, textColor=colors.HexColor("#424242")),
-        "header": ParagraphStyle("TableHeader", parent=styles["Normal"], fontSize=9, textColor=colors.white, alignment=TA_CENTER, fontName="Helvetica-Bold"),
-        "cell": ParagraphStyle("Cell", parent=styles["Normal"], fontSize=8.5, alignment=TA_CENTER),
-        "cell_left": ParagraphStyle("CellLeft", parent=styles["Normal"], fontSize=8.5, alignment=TA_LEFT),
-        "cell_right": ParagraphStyle("CellRight", parent=styles["Normal"], fontSize=8.5, alignment=TA_RIGHT),
-        "total": ParagraphStyle("TotalCell", parent=styles["Normal"], fontSize=10, fontName="Helvetica-Bold", alignment=TA_RIGHT, textColor=ACCENT),
-        "footer": ParagraphStyle("Footer", parent=styles["Normal"], fontSize=8, textColor=colors.HexColor("#9e9e9e")),
-    }
+F, FB = _init_fonts()
+
+# ===========================
+# COLORS (matching Lovable)
+# ===========================
+NAVY = colors.HexColor("#1F3A67")
+GREEN = colors.HexColor("#059669")
+CARD_BG = colors.HexColor("#F7F8FA")
+CARD_BORDER = colors.HexColor("#E5E7EB")
+ROW_ALT = colors.HexColor("#F9FAFB")
+ROW_BORDER = colors.HexColor("#E5E7EB")
+TXT = colors.HexColor("#1F2937")
+TXT_MID = colors.HexColor("#6B7280")
+TXT_LIGHT = colors.HexColor("#9CA3AF")
+WHITE = colors.white
+
+PW, PH = A4
+MX = 50
+MY_TOP = 45
+MY_BOT = 35
+CW = PW - 2 * MX
 
 
-def _build_teacher_story(teacher_name, data, mois_label, logo_path, styles):
-    story = []
+def _rrect(c, x, y, w, h, r=6, fill=None, stroke=None, sw=0.75):
+    p = c.beginPath()
+    p.roundRect(x, y, w, h, r)
+    if fill:
+        c.setFillColor(fill)
+    if stroke:
+        c.setStrokeColor(stroke)
+        c.setLineWidth(sw)
+    else:
+        c.setStrokeColor(fill or WHITE)
+        c.setLineWidth(0)
+    c.drawPath(p, fill=1 if fill else 0, stroke=1 if stroke else 0)
 
+
+def _circle(c, cx, cy, r, fill):
+    c.setFillColor(fill)
+    c.circle(cx, cy, r, fill=1, stroke=0)
+
+
+def _build_page(c, teacher_name, data, mois_label, logo_path):
+    total_chf = data.get("chf", 0)
+    total_hours = data.get("total_hours", 0)
+    nb_lessons = data.get("nb_lessons", 0)
+    details = data.get("details", [])
+
+    y = PH - MY_TOP
+
+    # ─── HEADER ───
+    logo_size = 44
     if logo_path and os.path.exists(logo_path):
         try:
-            logo = Image(logo_path, width=35*mm, height=35*mm)
-            logo.hAlign = "LEFT"
-            header_data = [[logo, Paragraph("Professor+<br/><font size=10>Détail de paie</font>", styles["title"])]]
-            header_table = Table(header_data, colWidths=[40*mm, 120*mm])
-            header_table.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
-            story.append(header_table)
+            c.drawImage(logo_path, MX, y - logo_size, width=logo_size, height=logo_size, preserveAspectRatio=True, mask='auto')
         except Exception:
-            story.append(Paragraph("Professor+", styles["title"]))
+            _circle(c, MX + 22, y - 22, 22, NAVY)
+            c.setFillColor(WHITE)
+            c.setFont(FB, 16)
+            c.drawCentredString(MX + 22, y - 28, "P+")
     else:
-        story.append(Paragraph("Professor+", styles["title"]))
+        _circle(c, MX + 22, y - 22, 22, NAVY)
+        c.setFillColor(WHITE)
+        c.setFont(FB, 16)
+        c.drawCentredString(MX + 22, y - 28, "P+")
 
-    story.append(Spacer(1, 3*mm))
-    story.append(Paragraph(f"Période : {mois_label}", styles["subtitle"]))
-    story.append(Spacer(1, 6*mm))
+    tx = MX + logo_size + 14
+    c.setFillColor(TXT)
+    c.setFont(FB, 20)
+    c.drawString(tx, y - 18, "Professor+")
+    c.setFillColor(TXT_LIGHT)
+    c.setFont(F, 9)
+    c.drawString(tx, y - 34, "Soutien scolaire personnalisé")
 
-    total_chf = data["chf"]
-    total_hours = data.get("total_hours", 0)
+    c.setFillColor(NAVY)
+    c.setFont(FB, 24)
+    c.drawRightString(PW - MX, y - 16, "Détail de paie")
+    c.setFillColor(TXT_MID)
+    c.setFont(F, 10)
+    c.drawRightString(PW - MX, y - 36, f"Période : {mois_label}")
 
-    info_data = [
-        [Paragraph("<b>Professeur</b>", styles["cell_left"]), Paragraph(teacher_name, styles["cell_left"])],
-        [Paragraph("<b>Nombre de leçons</b>", styles["cell_left"]), Paragraph(str(data["nb_lessons"]), styles["cell_left"])],
-        [Paragraph("<b>Heures totales</b>", styles["cell_left"]), Paragraph(f"{total_hours:.1f}h", styles["cell_left"])],
-        [Paragraph("<b>TOTAL À PAYER</b>", styles["cell_left"]),
-         Paragraph(f"<b>{total_chf:.2f} CHF</b>", ParagraphStyle("TI", parent=styles["cell_left"], fontSize=11, textColor=ACCENT, fontName="Helvetica-Bold"))],
+    y -= 58
+    c.setStrokeColor(CARD_BORDER)
+    c.setLineWidth(0.75)
+    c.line(MX, y, PW - MX, y)
+    y -= 30
+
+    # ─── METRIC CARDS ───
+    gap = 10
+    card1_w = CW * 0.34
+    card4_w = CW * 0.24
+    remaining = CW - card1_w - card4_w - 3 * gap
+    card_sm = remaining / 2
+    card_h = 62
+
+    cards = [
+        (card1_w, "PROFESSEUR", teacher_name, TXT, 13),
+        (card_sm, "LEÇONS", str(nb_lessons), NAVY, 22),
+        (card_sm, "HEURES", f"{total_hours:.1f}h", NAVY, 22),
+        (card4_w, "TOTAL À PAYER", f"{total_chf:,.2f} CHF", GREEN, 16),
     ]
-    info_table = Table(info_data, colWidths=[55*mm, 80*mm])
-    info_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8eaf6")),
-        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-        ("LINEBELOW", (0, 0), (-1, -2), 0.5, BORDER_COLOR),
-    ]))
-    story.append(info_table)
-    story.append(Spacer(1, 8*mm))
 
-    headers = ["Date", "Élève", "Durée", "Taux", "Montant CHF"]
-    header_row = [Paragraph(h, styles["header"]) for h in headers]
+    cx = MX
+    for w, label, val, vc, fs in cards:
+        _rrect(c, cx, y - card_h, w, card_h, r=8, fill=CARD_BG, stroke=CARD_BORDER)
+        c.setFillColor(TXT_LIGHT)
+        c.setFont(FB, 7)
+        c.drawString(cx + 14, y - 18, label)
+        c.setFillColor(vc)
+        actual_fs = fs
+        if len(val) > 20 and fs > 11:
+            actual_fs = 11
 
-    sorted_details = sorted(data["details"], key=lambda x: x["date"])
-    rows = [header_row]
-    for d in sorted_details:
-        rows.append([
-            Paragraph(d["date"], styles["cell"]),
-            Paragraph(d["student"], styles["cell_left"]),
-            Paragraph(f"{d['duration_min']} min", styles["cell"]),
-            Paragraph(f"{d['rate']}", styles["cell"]),
-            Paragraph(f"{d['amount_eur']:.2f} CHF", styles["cell_right"]),
-        ])
+        # Wrap PROFESSEUR name on 2 lines if needed
+        if label == "PROFESSEUR":
+            max_text_w = w - 28
+            text_w = c.stringWidth(val, FB, actual_fs)
+            if text_w > max_text_w:
+                words = val.split()
+                line1 = ""
+                line2 = ""
+                for word in words:
+                    test = (line1 + " " + word).strip()
+                    if c.stringWidth(test, FB, actual_fs) <= max_text_w:
+                        line1 = test
+                    else:
+                        line2 = (line2 + " " + word).strip()
+                c.setFont(FB, actual_fs)
+                c.drawString(cx + 14, y - card_h + 28, line1)
+                c.drawString(cx + 14, y - card_h + 12, line2)
+            else:
+                c.setFont(FB, actual_fs)
+                c.drawString(cx + 14, y - card_h + 18, val)
+        else:
+            c.setFont(FB, actual_fs)
+            c.drawString(cx + 14, y - card_h + 18, val)
 
-    rows.append([
-        Paragraph("", styles["cell"]), Paragraph("", styles["cell"]), Paragraph("", styles["cell"]),
-        Paragraph("<b>TOTAL</b>", ParagraphStyle("t", parent=styles["cell"], fontName="Helvetica-Bold")),
-        Paragraph(f"<b>{total_chf:.2f} CHF</b>", styles["total"]),
-    ])
+        cx += w + gap
 
-    col_widths = [22*mm, 58*mm, 18*mm, 18*mm, 25*mm]
-    lesson_table = Table(rows, colWidths=col_widths, repeatRows=1)
+    y -= card_h + 30
 
-    style_cmds = [
-        ("BACKGROUND", (0, 0), (-1, 0), HEADER_BG), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("GRID", (0, 0), (-1, -1), 0.5, BORDER_COLOR),
-        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#e8eaf6")),
-        ("LINEABOVE", (0, -1), (-1, -1), 1.5, HEADER_BG),
-    ]
-    for i in range(1, len(rows) - 1):
-        if i % 2 == 0:
-            style_cmds.append(("BACKGROUND", (0, i), (-1, i), ROW_ALT))
-    lesson_table.setStyle(TableStyle(style_cmds))
-    story.append(lesson_table)
+    # ─── SECTION TITLE ───
+    c.setFillColor(NAVY)
+    c.setFont(FB, 14)
+    c.drawString(MX, y, "Détail des leçons")
+    title_w = c.stringWidth("Détail des leçons", FB, 14)
+    c.setStrokeColor(NAVY)
+    c.setLineWidth(2)
+    c.line(MX, y - 5, MX + title_w, y - 5)
+    y -= 28
 
-    story.append(Spacer(1, 10*mm))
-    story.append(Paragraph("★ = tarif spécial  |  Généré automatiquement — Professor+", styles["footer"]))
-    return story
+    # ─── TABLE ───
+    cols = [90, 150, 70, 100, 85]
+    tw = sum(cols)
+    tx0 = MX + (CW - tw) / 2
+    rh = 36
+
+    # Header
+    _rrect(c, tx0, y - rh, tw, rh, r=5, fill=NAVY)
+    hdrs = ["Date", "Élève", "Durée", "Taux horaire", "Montant"]
+    c.setFillColor(WHITE)
+    c.setFont(FB, 9)
+    hx = tx0
+    for i, h in enumerate(hdrs):
+        if i == len(hdrs) - 1:
+            c.drawRightString(hx + cols[i] - 12, y - rh + 13, h)
+        else:
+            c.drawString(hx + 12, y - rh + 13, h)
+        hx += cols[i]
+    y -= rh
+
+    sorted_d = sorted(details, key=lambda d: d["date"])
+    tot_min = 0
+    tot_amt = 0.0
+
+    for idx, d in enumerate(sorted_d):
+        bg = ROW_ALT if idx % 2 == 0 else WHITE
+        c.setFillColor(bg)
+        c.rect(tx0, y - rh, tw, rh, fill=1, stroke=0)
+        c.setStrokeColor(ROW_BORDER)
+        c.setLineWidth(0.5)
+        c.line(tx0, y - rh, tx0 + tw, y - rh)
+
+        rx = tx0
+        ry = y - rh + 13
+        c.setFillColor(TXT)
+        c.setFont(F, 9)
+
+        c.drawString(rx + 12, ry, d["date"])
+        rx += cols[0]
+
+        student = d.get("student", "")
+        if "," in student:
+            parts = [p.strip() for p in student.split(",")]
+            student = " ".join(parts)
+        if len(student) > 22:
+            student = student[:20] + "…"
+        c.drawString(rx + 12, ry, student)
+        rx += cols[1]
+
+        dur = d.get("duration_min", 0)
+        tot_min += dur
+        c.drawString(rx + 12, ry, f"{dur} min")
+        rx += cols[2]
+
+        rate = d.get("rate", 0)
+        cur = d.get("currency", "CHF")
+        is_special = "★" in cur
+        taux = f"{rate:,.2f} CHF/h" + ("★" if is_special else "")
+        c.drawString(rx + 12, ry, taux)
+        rx += cols[3]
+
+        amt = d.get("amount_eur", 0)  # Key is amount_eur for compat but it's CHF
+        tot_amt += amt
+        c.setFont(FB, 9)
+        c.drawRightString(rx + cols[4] - 12, ry, f"{amt:,.2f} CHF")
+        y -= rh
+
+    # ─── TOTAL ROW ───
+    trh = 40
+    left_w = cols[0] + cols[1] + cols[2]
+    _rrect(c, tx0, y - trh, left_w, trh, r=0, fill=NAVY)
+    right_w = tw - left_w
+    c.setFillColor(CARD_BG)
+    c.rect(tx0 + left_w, y - trh, right_w, trh, fill=1, stroke=0)
+
+    c.setFillColor(WHITE)
+    c.setFont(FB, 11)
+    c.drawString(tx0 + 12, y - trh + 14, "TOTAL")
+    h, m = divmod(tot_min, 60)
+    c.drawString(tx0 + cols[0] + cols[1] + 12, y - trh + 14, f"{h}h{m:02d}" if m else f"{h}h")
+
+    c.setFillColor(GREEN)
+    c.setFont(FB, 15)
+    c.drawRightString(tx0 + tw - 12, y - trh + 12, f"{tot_amt:,.2f} CHF")
+
+    # ─── FOOTER ───
+    fy = MY_BOT + 8
+    c.setStrokeColor(CARD_BORDER)
+    c.setLineWidth(0.5)
+    c.line(MX, fy + 12, PW - MX, fy + 12)
+    c.setFillColor(TXT_LIGHT)
+    c.setFont(F, 7)
+    c.drawString(MX, fy, "★ = tarif spécial")
+    c.drawRightString(PW - MX, fy, "Généré automatiquement — Professor+")
 
 
-def generate_single_pdf_to_bytes(teacher_name, data, mois_label, logo_path=None, **kwargs):
-    styles = _build_styles()
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=20*mm, bottomMargin=20*mm)
-    story = _build_teacher_story(teacher_name, data, mois_label, logo_path, styles)
-    doc.build(story)
-    buffer.seek(0)
-    return buffer.getvalue()
+# ===========================
+# PUBLIC API
+# ===========================
+
+def generate_single_pdf_to_bytes(teacher_name, data, mois_label, logo_path=None, extraction_end_date=None):
+    buf = io.BytesIO()
+    cv = canvas.Canvas(buf, pagesize=A4)
+    _build_page(cv, teacher_name, data, mois_label, logo_path)
+    cv.save()
+    buf.seek(0)
+    return buf.getvalue()
 
 
-def generate_all_pdfs_as_zip(teacher_recaps, mois_label, logo_path=None, exclude_owner="Fares Chouchene", **kwargs):
+def generate_all_pdfs_as_zip(teacher_recaps, mois_label, logo_path=None, exclude_owner="Fares Chouchenne", extraction_end_date=None):
     import zipfile
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
         for tname in sorted(teacher_recaps.keys()):
             if tname == exclude_owner:
                 continue
-            data = teacher_recaps[tname]
-            if data["nb_lessons"] == 0:
+            d = teacher_recaps[tname]
+            if d["nb_lessons"] == 0:
                 continue
-            pdf_bytes = generate_single_pdf_to_bytes(tname, data, mois_label, logo_path)
-            safe_name = tname.replace(" ", "_")
-            zf.writestr(f"Paie_{safe_name}_{mois_label.replace(' ', '_')}.pdf", pdf_bytes)
-    zip_buffer.seek(0)
-    return zip_buffer.getvalue()
+            buf = io.BytesIO()
+            cv = canvas.Canvas(buf, pagesize=A4)
+            _build_page(cv, tname, d, mois_label, logo_path)
+            cv.save()
+            buf.seek(0)
+            safe = tname.replace(" ", "_")
+            zf.writestr(f"Paie_{safe}_{mois_label.replace(' ', '_')}.pdf", buf.getvalue())
+    zbuf.seek(0)
+    return zbuf.getvalue()
 
 
-def generate_all_pdfs_to_bytes(teacher_recaps, mois_label, logo_path=None, exclude_owner="Fares Chouchene", **kwargs):
-    styles = _build_styles()
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=15*mm, rightMargin=15*mm, topMargin=20*mm, bottomMargin=20*mm)
-    combined = []
+def generate_all_pdfs_to_bytes(teacher_recaps, mois_label, logo_path=None, exclude_owner="Fares Chouchenne", extraction_end_date=None):
+    buf = io.BytesIO()
+    cv = canvas.Canvas(buf, pagesize=A4)
     first = True
     for tname in sorted(teacher_recaps.keys()):
         if tname == exclude_owner:
             continue
-        data = teacher_recaps[tname]
-        if data["nb_lessons"] == 0:
+        d = teacher_recaps[tname]
+        if d["nb_lessons"] == 0:
             continue
         if not first:
-            combined.append(PageBreak())
+            cv.showPage()
         first = False
-        combined.extend(_build_teacher_story(tname, data, mois_label, logo_path, styles))
-    if combined:
-        doc.build(combined)
-        buffer.seek(0)
-        return buffer.getvalue()
+        _build_page(cv, tname, d, mois_label, logo_path)
+    if not first:
+        cv.save()
+        buf.seek(0)
+        return buf.getvalue()
     return None

@@ -115,8 +115,46 @@ def page_extract(ctx):
     st.info("Sélectionnez la période pour extraire les leçons depuis TutorBird.")
     
     today = datetime.today()
-    first_day = today.replace(day=1)
-    last_day = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+    
+    # ===========================
+    # SÉLECTION RAPIDE
+    # ===========================
+    st.markdown("**⚡ Sélection rapide**")
+    
+    if today.month == 1:
+        prev_y, prev_m = today.year - 1, 12
+    else:
+        prev_y, prev_m = today.year, today.month - 1
+    
+    if prev_m == 1:
+        prev2_y, prev2_m = prev_y - 1, 12
+    else:
+        prev2_y, prev2_m = prev_y, prev_m - 1
+    
+    MONTHS_FR = ctx["MONTHS_FR"]
+    
+    col_q1, col_q2, col_q3 = st.columns(3)
+    with col_q1:
+        if st.button(f"📅 {MONTHS_FR[prev_m - 1]} {prev_y}", width="stretch", key="quick_prev"):
+            st.session_state.extract_quick_month = (prev_y, prev_m)
+            st.rerun()
+    with col_q2:
+        if st.button(f"📅 {MONTHS_FR[prev2_m - 1]} {prev2_y}", width="stretch", key="quick_prev2"):
+            st.session_state.extract_quick_month = (prev2_y, prev2_m)
+            st.rerun()
+    with col_q3:
+        if st.button(f"📅 {MONTHS_FR[today.month - 1]} {today.year} (en cours)", width="stretch", key="quick_current"):
+            st.session_state.extract_quick_month = (today.year, today.month)
+            st.rerun()
+    
+    quick = st.session_state.get("extract_quick_month")
+    if quick:
+        qy, qm = quick
+        first_day = datetime(qy, qm, 1).date()
+        last_day = datetime(qy, qm, calendar.monthrange(qy, qm)[1]).date()
+    else:
+        first_day = today.replace(day=1)
+        last_day = today.replace(day=calendar.monthrange(today.year, today.month)[1])
     
     col1, col2 = st.columns(2)
     with col1:
