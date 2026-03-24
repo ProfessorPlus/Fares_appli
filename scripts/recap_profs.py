@@ -2,10 +2,14 @@
 👨‍🏫 Recap Profs - VERSION FARES
 Calcul des montants à payer aux professeurs en CHF
 Tout est en CHF — pas de conversion EUR nécessaire.
+
+⚡ Prend en compte les paiements déjà effectués (solde_final_reel)
+   pour ne comptabiliser que les cours réellement impayés.
 """
 
 import unicodedata
 from collections import defaultdict
+from datetime import datetime
 
 
 PAYABLE_STATUSES = {"Present", "Unrecorded", "AbsentNoMakeup"}
@@ -19,9 +23,71 @@ def norm(name: str) -> str:
     return " ".join(s.split())
 
 
+def _parse_dt(date_str):
+    """Parse une date DD.MM.YYYY"""
+    try:
+        return datetime.strptime(date_str, "%d.%m.%Y")
+    except Exception:
+        return datetime.min
+
+
+def _select_unpaid_lessons(fam):
+    """
+    Sélectionne les cours impayés d'une famille basé sur solde_final_reel.
+    Même logique que create_payment_links.select_unpaid_lessons_for_family.
+    
+    - Si solde_final_reel <= 0 → famille à jour → aucun cours impayé
+    - Sinon, prend les cours les plus récents jusqu'à couvrir le solde
+    - Exclut AbsentNotice (absence signalée = non facturé)
+    - Inclut AbsentNoMakeup (absence sans rattrapage = facturé)
+    
+    Returns:
+        list: cours impayés sélectionnés
+    """
+    solde = float(fam.get("solde_final_reel") or 0)
+    lessons = fam.get("lessons", [])
+
+    if solde <= 0 or not lessons:
+        return []
+
+    all_lessons = []
+    for L in lessons:
+        attendance = L.get("attendance_status", "")
+        if attendance == "AbsentNotice":
+            continue
+
+        amt = float(L.get("amount") or 0)
+        if amt <= 0:
+            continue
+
+        L2 = dict(L)
+        L2["amount"] = amt
+        L2["dt"] = _parse_dt(L.get("date"))
+        all_lessons.append(L2)
+
+    # Cours les plus récents en premier
+    all_lessons.sort(key=lambda x: x["dt"], reverse=True)
+
+    selected = []
+    running_total = 0.0
+
+    for L in all_lessons:
+        amt = L["amount"]
+        if running_total + amt <= solde + 1e-6:
+            selected.append(L)
+            running_total += amt
+        if abs(running_total - solde) <= 1e-6:
+            break
+
+    return selected
+
+
 def compute_teacher_recap(data, secrets, familles_euros=None, tarifs_speciaux=None, **kwargs):
     """
     Calcule le récap des montants à payer à chaque prof en CHF.
+    
+    ⚡ Ne comptabilise que les cours IMPAYÉS (basé sur solde_final_reel).
+       Les cours déjà réglés par les familles sont exclus du calcul.
     
     Args:
         data: dict des familles (full_output_tb_SIMPLE.json)
@@ -35,6 +101,8 @@ def compute_teacher_recap(data, secrets, familles_euros=None, tarifs_speciaux=No
             "teachers": {teacher_name: {chf, nb_lessons, total_hours, details}},
             "grand_total": float,
             "total_lessons": int,
+            "families_fully_paid": int,
+            "families_with_balance": int,
         }
     """
     teachers_cfg = secrets.get("teachers", {})
@@ -71,13 +139,53 @@ def compute_teacher_recap(data, secrets, familles_euros=None, tarifs_speciaux=No
         "nb_lessons": 0, "total_hours": 0.0, "details": []
     })
 
-    for fam in data.values():
+    families_fully_paid = 0
+    families_with_balance = 0
+
+    for fam_id, fam in data.items():
         parent = fam.get("parent_name") or ""
+
+        # ⚡ Sélectionner uniquement les cours impayés
+        unpaid_lessons = _select_unpaid_lessons(fam)
+
+        if not unpaid_lessons:
+            # Famille à jour ou pas de cours facturables
+            solde = float(fam.get("solde_final_reel") or 0)
+            if solde <= 0 and fam.get("lessons"):
+                families_fully_paid += 1
+            continue
+
+        families_with_balance += 1
+
+        # Créer un set des cours impayés pour matching rapide
+        # On identifie chaque cours par (date, student, teacher, duration)
+        unpaid_keys = set()
+        for L in unpaid_lessons:
+            key = (
+                L.get("date", ""),
+                L.get("student", ""),
+                L.get("teacher", ""),
+                L.get("duration_min") or 0,
+            )
+            unpaid_keys.add(key)
 
         for lesson in fam.get("lessons", []):
             status = lesson.get("attendance_status", "")
             if status not in PAYABLE_STATUSES:
                 continue
+
+            # Vérifier si ce cours fait partie des impayés
+            lesson_key = (
+                lesson.get("date", ""),
+                lesson.get("student", ""),
+                lesson.get("teacher", ""),
+                lesson.get("duration_min") or 0,
+            )
+            if lesson_key not in unpaid_keys:
+                continue
+
+            # Retirer la clé pour éviter les doublons si plusieurs cours identiques
+            unpaid_keys.discard(lesson_key)
 
             t_name = lesson.get("teacher") or ""
             duration = lesson.get("duration_min") or 0
@@ -122,4 +230,6 @@ def compute_teacher_recap(data, secrets, familles_euros=None, tarifs_speciaux=No
         "grand_total": round(grand_total, 2),
         "total_lessons": total_lessons,
         "currency": "CHF",
+        "families_fully_paid": families_fully_paid,
+        "families_with_balance": families_with_balance,
     }
